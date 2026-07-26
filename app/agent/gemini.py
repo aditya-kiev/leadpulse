@@ -16,15 +16,13 @@ gemini_call_counter: ContextVar[int] = ContextVar("gemini_call_counter", default
 # Override RPM limit for demo-token-authenticated requests (set per-request)
 demo_rpm_limit: ContextVar[int] = ContextVar("demo_rpm_limit", default=0)
 
-# Sliding-window rate limiter — tracks timestamps of calls in the last 60 s
-# and refuses (by sleeping) once the count reaches the RPM ceiling.
-# This actually paces sequential calls, unlike a semaphore which only limits
-# concurrency (zero effect in our all-sequential pattern).
+# In-memory fallback rate limiter (used when Redis is unavailable)
 _sliding_lock: asyncio.Lock | None = None
 _sliding_timestamps: deque[float] | None = None
+_redis_limiter: Any = None
 
 
-def _get_rate_limiter() -> tuple[asyncio.Lock, deque[float]]:
+def _get_fallback_limiter() -> tuple[asyncio.Lock, deque[float]]:
     global _sliding_lock, _sliding_timestamps
     if _sliding_lock is None:
         _sliding_lock = asyncio.Lock()
@@ -33,15 +31,33 @@ def _get_rate_limiter() -> tuple[asyncio.Lock, deque[float]]:
 
 
 async def _acquire_rate_limit() -> None:
-    """Wait until a slot opens in the 60-second sliding window."""
-    lock, timestamps = _get_rate_limiter()
+    """Wait until a slot opens in the 60-second sliding window.
 
-    # Use demo-specific RPM limit if set, otherwise the global limit
+    Uses Redis-backed sliding window when Redis is available, falls back
+    to the per-process in-memory deque.
+    """
     override = demo_rpm_limit.get()
     rpm_limit = int(override if override > 0 else settings.gemini_rpm_limit)
     if rpm_limit <= 0:
-        return  # disabled
+        return
 
+    # Try Redis-backed limiter first
+    global _redis_limiter
+    if _redis_limiter is None and settings.redis_url:
+        from app.services.redis import RedisSlidingWindowRateLimiter
+        _redis_limiter = RedisSlidingWindowRateLimiter()
+
+    if _redis_limiter is not None:
+        wait = await _redis_limiter.acquire(rpm_limit)
+        if wait == 0:
+            return
+        if wait > 0:
+            await asyncio.sleep(wait)
+            return
+        # wait == -1 means Redis unavailable — fall through
+
+    # In-memory fallback
+    lock, timestamps = _get_fallback_limiter()
     while True:
         async with lock:
             now = time.monotonic()
@@ -53,7 +69,6 @@ async def _acquire_rate_limit() -> None:
                 timestamps.append(now)
                 return
 
-            # Window is full — sleep until the oldest entry expires
             wait = timestamps[0] + 60.0 - now
 
         await asyncio.sleep(wait)

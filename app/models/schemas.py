@@ -71,6 +71,8 @@ class ConversationHistoryOut(BaseModel):
 class HealthOut(BaseModel):
     status: str = "ok"
     version: str = "1.0.0"
+    database: bool | None = None
+    redis: bool | None = None
 
 
 class LeadScoreIn(BaseModel):

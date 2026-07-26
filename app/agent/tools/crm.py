@@ -4,6 +4,7 @@ from uuid import UUID
 from app.database.crud import log_crm_push
 from app.integrations.registry import resolve_integration
 from app.integrations.retry import retry_with_backoff
+from app.services.redis import enqueue_crm_push
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,13 @@ async def update_crm(session_id: str, lead_data: dict, tenant_id: UUID | None = 
 
     if result and result.success:
         return {"status": result.status, "external_id": result.external_id}
+
+    # Enqueue for async retry via Redis-backed queue
+    try:
+        await enqueue_crm_push(tenant_id, session_id, lead_data, integration.integration_type)
+    except Exception as q_err:
+        logger.warning("Failed to enqueue CRM push for session=%s: %s", session_id, q_err)
+
     return {"status": "failed", "error": result.error_message if result else "push_error"}
 
 

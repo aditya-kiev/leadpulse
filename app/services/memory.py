@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.database.crud import get_conversation, update_conversation, create_conversation
 from app.database.session import async_session_factory
+from app.services.redis import cache_session_state, get_cached_session_state, invalidate_session_cache
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class ConversationMemory:
                     current_node=state.get("current_node"),
                     human_escalated=state.get("human_escalated", False),
                 )
+                await invalidate_session_cache(session_id)
                 logger.debug("save_state OK session=%s", session_id)
         except Exception as e:
             logger.warning("save_state failed session=%s: %s", session_id, str(e))
@@ -44,13 +46,17 @@ class ConversationMemory:
 
     async def load_state(self, session_id: str, tenant_id: UUID | None = None) -> dict | None:
         logger.debug("load_state session=%s tenant_id=%s", session_id, tenant_id)
+        cached = await get_cached_session_state(session_id)
+        if cached is not None:
+            logger.debug("load_state cache HIT session=%s", session_id)
+            return cached
         try:
             async with async_session_factory() as db_session:
                 lead = await get_conversation(db_session, session_id, tenant_id=tenant_id)
                 if not lead:
                     logger.debug("load_state: not found session=%s", session_id)
                     return None
-                return {
+                state = {
                     "lead_name": lead.lead_name,
                     "company_name": lead.company_name,
                     "industry": lead.industry,
@@ -68,6 +74,9 @@ class ConversationMemory:
                     "current_node": lead.current_node,
                     "human_escalated": lead.human_escalated,
                 }
+                await cache_session_state(session_id, state)
+                logger.debug("load_state cache MISS session=%s", session_id)
+                return state
         except Exception as e:
             logger.warning("load_state failed session=%s: %s", session_id, str(e))
             raise

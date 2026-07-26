@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"
 
+    # Sentry
+    sentry_dsn: str = ""
+
     # CRM integrations
     crm_encryption_key: str = ""
     fub_api_key: str = ""
