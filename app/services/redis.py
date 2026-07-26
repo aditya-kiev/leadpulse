@@ -60,27 +60,33 @@ async def is_redis_available() -> bool:
 
 _RATE_LIMIT_SCRIPT = """
 local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
+local now_ms = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
 local limit = tonumber(ARGV[3])
-local cutoff = now - window
+local cutoff = now_ms - window_ms
 redis.call("ZREMRANGEBYSCORE", key, 0, cutoff)
 local count = redis.call("ZCARD", key)
 if count < limit then
-    redis.call("ZADD", key, now, now)
-    redis.call("EXPIRE", key, window + 1)
+    local seq = redis.call("INCR", key .. ":seq")
+    redis.call("ZADD", key, now_ms, seq)
+    redis.call("EXPIRE", key, math.ceil(window_ms / 1000) + 1)
+    redis.call("EXPIRE", key .. ":seq", math.ceil(window_ms / 1000) + 1)
     return 0
 end
-local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
-local retry_after = oldest[2] + window - now
-return math.ceil(retry_after * 1000) / 1000
+local oldest_members = redis.call("ZRANGE", key, 0, 0)
+local oldest_score = 0
+if #oldest_members > 0 then
+    oldest_score = redis.call("ZSCORE", key, oldest_members[1])
+end
+local retry_after_sec = (oldest_score + window_ms - now_ms) / 1000
+if retry_after_sec < 0 then retry_after_sec = 0 end
+return math.ceil(retry_after_sec * 1000) / 1000
 """
 
 
 class RedisSlidingWindowRateLimiter:
     def __init__(self, key_prefix: str = "ratelimit:gemini"):
         self._key_prefix = key_prefix
-        self._script_hash = None
 
     async def acquire(self, rpm_limit: int, window: int = 60) -> float:
         """Acquire a slot. Returns 0 on success, or seconds to wait if denied."""
@@ -89,10 +95,12 @@ class RedisSlidingWindowRateLimiter:
         r = await get_redis()
         if r is None:
             return -1
-        key = f"{self._key_prefix}:{id(self)}"
-        now = __import__("time").time()
+        # Use a fixed global key so all workers share the same rate-limit budget
+        key = f"{self._key_prefix}:global"
+        now_ms = int(__import__("time").time() * 1000)
+        window_ms = window * 1000
         try:
-            result = await r.eval(self._script_hash, 1, key, str(int(now * 1000)), str(window), str(rpm_limit))
+            result = await r.eval(_RATE_LIMIT_SCRIPT, 1, key, str(now_ms), str(window_ms), str(rpm_limit))
             if isinstance(result, list):
                 result = result[0] if result else 0
             return float(result or 0)
