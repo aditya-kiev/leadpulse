@@ -1,3 +1,56 @@
+"""
+AMS360 (Vertafore) CRM integration — STUB / NOT YET FUNCTIONAL.
+
+Verification date: 2026-07-26
+Source: https://help.vertafore.com/AMS360/content/contextsensitive/download-integration/cswebserviceapisetup.htm
+        + Vertafore Orange Partner Program documentation
+        + https://affwsapi.ams360.com/v2/service.asmx
+
+DISCREPANCIES vs. real AMS360 API (code below is a placeholder stub):
+
+1. API type mismatch
+   Real AMS360 exposes a SOAP/WCF service at:
+     https://affwsapi.ams360.com/v2/service.asmx
+   The current code assumes REST/JSON at:
+     https://api.ams360.com/v1
+   These are incompatible protocols. A SOAP client (zeep, suds, or raw
+   XML Envelope requests) is required, not httpx JSON POSTs.
+
+2. Authentication mismatch
+   Real auth uses a WSAPI Login ID + Password configured inside the
+   agency's AMS360 Administration Center (per-tenant credentials, not
+   global). The current code sends apiKey/secret to a non-existent
+   /authenticate endpoint. For partner-level integrations Vertafore
+   requires OAuth2 via the Orange Partner Program (partner_client_id +
+   partner_client_secret, password grant, Bearer token cached per
+   agency).
+
+3. Commercial prerequisites (not code, but blocking)
+   - WSAPI SDK: must be purchased from Vertafore Sales (separate
+     license agreement). This is required even to see the WSDL.
+   - Vertafore Orange Partner Program: required for third-party
+     partner-level OAuth2 credentials. Application-based approval.
+   - Test environment: available at additional cost from Vertafore.
+
+4. Data format
+   Real API uses SOAP/XML (WSDL-defined contracts) for all entity
+   operations (customers, policies, claims, etc.). The current code
+   sends JSON payloads that would be rejected.
+
+Action needed before this integration can be used:
+  a) Purchase/sign the WSAPI SDK agreement with Vertafore.
+  b) Apply for the Orange Partner Program (if partner-level auth is
+     desired).
+  c) Rewrite the integration using a SOAP client library (e.g. zeep),
+     matching the WSDL definitions after SDK access is granted.
+  d) Update _AMS360_API_BASE, authentication flow, and payload shape
+     to match the real SOAP service.
+
+Until at least (a) is complete, this file cannot be tested against a
+real AMS360 instance. The code below exists as a structural placeholder
+matching the CRMIntegration base class interface.
+"""
+
 import logging
 from uuid import UUID
 

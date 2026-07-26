@@ -36,7 +36,16 @@ async def init_db():
     logger.info("DB init_db: starting...")
     try:
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+            def _check_and_create(sync_conn):
+                from sqlalchemy import inspect
+                inspector = inspect(sync_conn)
+                if "alembic_version" in inspector.get_table_names():
+                    logger.info("DB: alembic_version table found — schema managed by Alembic, skipping create_all")
+                    return
+                logger.warning("DB: no alembic_version table — running create_all for dev convenience. "
+                               "Run 'alembic stamp head' once to switch to Alembic management.")
+                Base.metadata.create_all(sync_conn)
+            await conn.run_sync(_check_and_create)
         logger.info("DB init_db: completed OK")
     except Exception as e:
         logger.warning("DB init_db: failed: %s", e)

@@ -34,6 +34,9 @@ alembic stamp head
 This writes the `001_initial_schema` revision to `alembic_version` without
 executing any DDL.
 
+Once stamped, subsequent startups will detect the `alembic_version` table
+and skip `create_all` automatically (see Startup Behavior below).
+
 ## For new databases
 
 ```bash
@@ -62,6 +65,27 @@ alembic downgrade -1      # undo last migration
 alembic downgrade 001_initial_schema  # back to baseline
 alembic downgrade base    # drop everything
 ```
+
+## Startup behavior
+
+The app's startup (`app/database/session.py:init_db`) checks for the
+`alembic_version` table on every boot:
+
+- **If `alembic_version` exists** → schema is managed by Alembic.
+  `create_all` is **skipped**. The app assumes migrations are up to date.
+- **If `alembic_version` is absent** → runs `create_all` as a dev
+  convenience (creates tables matching the current models directly). A
+  warning is logged suggesting to switch to Alembic management.
+
+This is a deliberate choice: zero-friction for fresh dev environments
+(pip install → run app → tables exist) while preventing conflicts once
+Alembic is adopted. To switch an existing database to Alembic management:
+
+```bash
+alembic stamp head
+```
+
+Restart the app — `create_all` will no longer run.
 
 ---
 
