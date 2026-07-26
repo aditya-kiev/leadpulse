@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,13 +12,23 @@ from app.agent.tools.crm import update_crm
 logger = logging.getLogger("graph.node.end_conversation")
 
 
+def _parse_tenant_id(raw: str | None) -> UUID | None:
+    if raw is None:
+        return None
+    try:
+        return UUID(raw)
+    except (ValueError, AttributeError):
+        return None
+
+
 def create_end_conversation_node(model: ChatGoogleGenerativeAI):
     async def end_conversation_node(state: AgentState) -> dict:
         user_msgs = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
+        tenant_id = _parse_tenant_id(state.get("tenant_id"))
         logger.info("NODE end_conversation ENTERED: session=%s tenant=%s lead_status=%s",
-                    state.get("session_id"), state.get("tenant_id"), state.get("lead_status"))
+                    state.get("session_id"), tenant_id, state.get("lead_status"))
 
         lead_data = {
             k: state.get(k) for k in [
@@ -26,7 +37,7 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
                 "meeting_time", "booking_confirmed", "human_escalated",
             ]
         }
-        update_crm(state["session_id"], lead_data, tenant_id=state.get("tenant_id"))
+        await update_crm(state["session_id"], lead_data, tenant_id=tenant_id)
         logger.info("NODE end_conversation: CRM updated")
 
         response = await model.ainvoke([

@@ -57,5 +57,13 @@ class Settings(BaseSettings):
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"
 
+    # CRM integrations
+    crm_encryption_key: str = ""
+    fub_api_key: str = ""
+    kvcore_api_key: str = ""
+    kvcore_api_secret: str = ""
+    ams360_api_key: str = ""
+    ams360_api_secret: str = ""
+
 
 settings = Settings()

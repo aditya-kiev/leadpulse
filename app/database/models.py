@@ -84,3 +84,18 @@ class LeadConversation(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     organization = relationship("Organization", back_populates="conversations")
+
+
+class PushLog(Base):
+    __tablename__ = "push_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
+    integration_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempt: Mapped[int] = mapped_column(default=1)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    lead_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    response_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

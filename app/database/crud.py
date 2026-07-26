@@ -4,7 +4,8 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import LeadConversation, Organization, User, CRMConfig
+from app.database.models import LeadConversation, Organization, User, CRMConfig, PushLog
+from app.database.session import async_session_factory
 
 logger = logging.getLogger(__name__)
 
@@ -134,4 +135,48 @@ async def list_users_by_organization(
     result = await session.execute(
         select(User).where(User.organization_id == organization_id).order_by(User.created_at.desc())
     )
+    return list(result.scalars().all())
+
+
+async def log_crm_push(
+    organization_id: UUID,
+    integration_type: str,
+    session_id: str | None = None,
+    status: str = "unknown",
+    attempt: int = 1,
+    lead_data: dict | None = None,
+    response_data: dict | None = None,
+    error_message: str | None = None,
+) -> PushLog:
+    async with async_session_factory() as session:
+        log = PushLog(
+            organization_id=organization_id,
+            integration_type=integration_type,
+            session_id=session_id,
+            status=status,
+            attempt=attempt,
+            lead_data=lead_data,
+            response_data=response_data,
+            error_message=error_message,
+        )
+        session.add(log)
+        await session.flush()
+        await session.commit()
+        return log
+
+
+async def get_push_logs(
+    session: AsyncSession,
+    organization_id: UUID,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[PushLog]:
+    stmt = (
+        select(PushLog)
+        .where(PushLog.organization_id == organization_id)
+        .order_by(PushLog.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
     return list(result.scalars().all())
