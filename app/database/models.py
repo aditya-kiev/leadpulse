@@ -20,6 +20,9 @@ class Organization(Base):
     logo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     primary_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     custom_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_domain_status: Mapped[str] = mapped_column(String(20), nullable=False, default="unverified")
+    domain_verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tls_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

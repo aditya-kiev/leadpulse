@@ -1,3 +1,70 @@
+# Alembic Migration Guide
+
+## Overview
+
+This project uses **Alembic** for schema migrations. The first version
+(`001_initial_schema`) is a **baseline** snapshot of all 7 tables created
+across Phases 1–5 (and subsequent fixes). Future schema changes are written
+as new Alembic revision files.
+
+## Quick reference
+
+| Command | When to use |
+|---------|-------------|
+| `alembic upgrade head` | Apply all pending migrations |
+| `alembic downgrade -1` | Undo the last migration |
+| `alembic current` | Show which revision the DB is at |
+| `alembic history` | Show full migration chain |
+| `alembic revision --autogenerate -m "desc"` | Generate a new migration from model changes |
+| `alembic stamp head` | Mark the DB as at head **without** running SQL (for existing DBs) |
+
+## First-time setup for existing databases
+
+If you already have tables created automatically via
+`Base.metadata.create_all` (the pre-Alembic approach), **do not** run
+`alembic upgrade head` — it will fail because the tables already exist.
+
+Instead, tell Alembic that your DB is already at the baseline:
+
+```bash
+cd lead-agent
+alembic stamp head
+```
+
+This writes the `001_initial_schema` revision to `alembic_version` without
+executing any DDL.
+
+## For new databases
+
+```bash
+cd lead-agent
+alembic upgrade head
+```
+
+This creates all 7 tables from scratch.
+
+## Adding new migrations
+
+After editing models in `app/database/models.py`:
+
+```bash
+cd lead-agent
+alembic revision --autogenerate -m "description_of_change"
+alembic upgrade head
+```
+
+Review the generated file in `alembic/versions/` before applying.
+
+## Downgrading (rollback)
+
+```bash
+alembic downgrade -1      # undo last migration
+alembic downgrade 001_initial_schema  # back to baseline
+alembic downgrade base    # drop everything
+```
+
+---
+
 # Phase 1 — Multi-Tenancy Migration
 
 ## Schema changes
@@ -99,7 +166,7 @@ COMMIT;
 
 Or using Alembic:
 ```bash
-alembic downgrade 001
+alembic downgrade 001_initial_schema
 ```
 
 ### Data safety guarantees

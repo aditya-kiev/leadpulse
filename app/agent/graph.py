@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -291,9 +292,10 @@ async def run_agent(
             if value is not None and key in turn_input:
                 turn_input[key] = value
 
+    now = datetime.now(timezone.utc).isoformat()
     turn_input["conversation_history"] = (
         turn_input.get("conversation_history") or []
-    ) + [{"role": "user", "content": message}]
+    ) + [{"role": "user", "content": message, "timestamp": now}]
 
     result = await graph.ainvoke(turn_input, config)
     result["tenant_id"] = tenant_id_str

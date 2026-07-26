@@ -39,6 +39,8 @@ async def test_analytics_metrics_endpoint(client):
         "average_qualification_score": 0.65,
         "meetings_booked": 3,
         "human_escalations": 1,
+        "average_response_time_seconds": None,
+        "cost_per_booked_meeting": None,
     }
 
     with _make_mock_auth(tenant_id=tid):
@@ -79,6 +81,7 @@ async def test_compute_org_metrics_empty():
             mock_scalars.all.return_value = []
             mock_result = MagicMock()
             mock_result.scalars.return_value = mock_scalars
+            mock_result.scalar.return_value = 0.0
             mock_session.execute = AsyncMock(return_value=mock_result)
 
             result = await compute_org_metrics(tid)
@@ -86,6 +89,8 @@ async def test_compute_org_metrics_empty():
             assert result["qualification_rate"] == 0
             assert result["booking_rate"] == 0
             assert result["meetings_booked"] == 0
+            assert result["average_response_time_seconds"] is None
+            assert result["cost_per_booked_meeting"] is None
 
 
 @pytest.mark.asyncio
@@ -114,6 +119,7 @@ async def test_compute_org_metrics_with_data():
         mock_scalars.all.return_value = mock_convos
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
+        mock_result.scalar.return_value = 2.0  # cost sum for second query
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         result = await compute_org_metrics(tid)
@@ -124,6 +130,8 @@ async def test_compute_org_metrics_with_data():
         assert result["qualification_rate"] == 0.6  # 3/5
         assert result["booking_rate"] == 0.4  # 2/5
         assert result["meetings_booked"] == 2
+        assert result["average_response_time_seconds"] is None
+        assert result["cost_per_booked_meeting"] == 1.0  # 2.0 / 2
 
 
 @pytest.mark.asyncio
@@ -143,6 +151,8 @@ async def test_run_daily_rollup():
                 "average_qualification_score": 0.65,
                 "meetings_booked": 2,
                 "human_escalations": 0,
+                "average_response_time_seconds": None,
+                "cost_per_booked_meeting": None,
             }
             with patch("app.services.analytics.async_session_factory") as mock_sf:
                 mock_rollup_session = AsyncMock()
@@ -196,3 +206,139 @@ async def test_extract_usage_from_response():
     usage = _extract_usage(MockResponse())
     assert usage.get("prompt_token_count") == 100
     assert usage.get("candidates_token_count") == 50
+
+
+# ── average_response_time_seconds tests ──
+
+
+@pytest.mark.asyncio
+async def test_response_time_returns_none_for_existing_data():
+    """Response time is None until per-message timestamps are collected."""
+    from app.services.analytics import compute_org_metrics
+    from uuid import UUID
+    from datetime import datetime, timezone
+
+    tid = UUID("00000000-0000-0000-0000-000000000001")
+    conv = MagicMock()
+    conv.lead_status = "hot"
+    conv.booking_confirmed = True
+    conv.human_escalated = False
+    conv.qualification_score = 0.8
+    conv.conversation_stage = "qualified"
+    conv.created_at = datetime.now(timezone.utc)
+
+    with patch("app.services.analytics.async_session_factory") as mock_sf:
+        mock_session = AsyncMock()
+        mock_sf.return_value.__aenter__.return_value = mock_session
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [conv]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_result.scalar.return_value = 0.0
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await compute_org_metrics(tid)
+        assert result["average_response_time_seconds"] is None
+
+
+# ── cost_per_booked_meeting tests ──
+
+
+@pytest.mark.asyncio
+async def test_cost_per_meeting_normal():
+    """2 meetings, $5 total cost → $2.50 per meeting."""
+    from app.services.analytics import compute_org_metrics
+    from uuid import UUID
+    from datetime import datetime, timezone
+
+    tid = UUID("00000000-0000-0000-0000-000000000001")
+    conv = MagicMock()
+    conv.lead_status = "hot"
+    conv.booking_confirmed = True
+    conv.human_escalated = False
+    conv.qualification_score = 0.8
+    conv.conversation_stage = "qualified"
+    conv.created_at = datetime.now(timezone.utc)
+
+    with patch("app.services.analytics.async_session_factory") as mock_sf:
+        mock_session = AsyncMock()
+        mock_sf.return_value.__aenter__.return_value = mock_session
+
+        # mock for conversations query
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [conv, conv]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_result.scalar.return_value = 5.0  # $5 total cost
+
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await compute_org_metrics(tid)
+        assert result["meetings_booked"] == 2
+        assert result["cost_per_booked_meeting"] == 2.5  # 5.0 / 2
+
+
+@pytest.mark.asyncio
+async def test_cost_per_meeting_zero_meetings():
+    """0 meetings → cost_per_booked_meeting is None (not error, not 0)."""
+    from app.services.analytics import compute_org_metrics
+    from uuid import UUID
+    from datetime import datetime, timezone
+
+    tid = UUID("00000000-0000-0000-0000-000000000001")
+    conv = MagicMock()
+    conv.lead_status = "cold"
+    conv.booking_confirmed = False
+    conv.human_escalated = False
+    conv.qualification_score = 0.3
+    conv.conversation_stage = "greeting"
+    conv.created_at = datetime.now(timezone.utc)
+
+    with patch("app.services.analytics.async_session_factory") as mock_sf:
+        mock_session = AsyncMock()
+        mock_sf.return_value.__aenter__.return_value = mock_session
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [conv]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_result.scalar.return_value = 3.0
+
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await compute_org_metrics(tid)
+        assert result["meetings_booked"] == 0
+        assert result["cost_per_booked_meeting"] is None
+
+
+@pytest.mark.asyncio
+async def test_cost_per_meeting_zero_cost():
+    """$0 cost with meetings → cost_per_booked_meeting is 0.0."""
+    from app.services.analytics import compute_org_metrics
+    from uuid import UUID
+    from datetime import datetime, timezone
+
+    tid = UUID("00000000-0000-0000-0000-000000000001")
+    conv = MagicMock()
+    conv.lead_status = "hot"
+    conv.booking_confirmed = True
+    conv.human_escalated = False
+    conv.qualification_score = 0.8
+    conv.conversation_stage = "qualified"
+    conv.created_at = datetime.now(timezone.utc)
+
+    with patch("app.services.analytics.async_session_factory") as mock_sf:
+        mock_session = AsyncMock()
+        mock_sf.return_value.__aenter__.return_value = mock_session
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [conv]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_result.scalar.return_value = 0.0
+
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await compute_org_metrics(tid)
+        assert result["meetings_booked"] == 1
+        assert result["cost_per_booked_meeting"] == 0.0

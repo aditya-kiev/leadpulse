@@ -40,6 +40,8 @@ class OrgMetricsOut(BaseModel):
     average_qualification_score: float
     meetings_booked: int
     human_escalations: int
+    average_response_time_seconds: float | None = None
+    cost_per_booked_meeting: float | None = None
 
 
 class DailySummaryOut(BaseModel):

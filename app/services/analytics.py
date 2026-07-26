@@ -12,7 +12,7 @@ from uuid import UUID
 from sqlalchemy import select, func
 
 from app.database.crud import get_conversations_by_tenant
-from app.database.models import LeadConversation
+from app.database.models import LeadConversation, UsageLog
 from app.database.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ async def compute_org_metrics(
     start_date: str | None = None,
     end_date: str | None = None,
 ):
-    """Compute the 6 core metrics for an organization over a date range."""
+    """Compute the 8 core metrics for an organization over a date range."""
     async with async_session_factory() as session:
         base = select(LeadConversation).where(LeadConversation.tenant_id == tenant_id)
         if start_date:
@@ -54,6 +54,31 @@ async def compute_org_metrics(
         "qualified": len([c for c in conversations if c.conversation_stage == "qualified"]),
     }
 
+    # Average response time — per-message timestamps are not stored in
+    # conversation_history for existing conversations, so this is None
+    # until timestamps are collected going forward (see graph.py where
+    # messages now get a "timestamp" field appended on each turn).
+    average_response_time_seconds = None
+
+    # Cost-per-booked-meeting: total Gemini cost over period / meetings_booked
+    # "Cost" here = Gemini API inference cost only (estimated from token
+    # counts at per-token rates from app/agent/gemini.py).
+    total_cost = 0.0
+    cost_per_booked_meeting = None
+    if total > 0:
+        async with async_session_factory() as session:
+            cost_query = select(func.coalesce(func.sum(UsageLog.estimated_cost), 0.0)).where(
+                UsageLog.organization_id == tenant_id,
+            )
+            if start_date:
+                cost_query = cost_query.where(UsageLog.created_at >= start_date)
+            if end_date:
+                cost_query = cost_query.where(UsageLog.created_at <= end_date + "T23:59:59")
+            cost_result = await session.execute(cost_query)
+            total_cost = cost_result.scalar() or 0.0
+        if len(booked) > 0:
+            cost_per_booked_meeting = round(total_cost / len(booked), 4)
+
     return {
         "lead_volume": {
             "total": total,
@@ -67,6 +92,15 @@ async def compute_org_metrics(
         "average_qualification_score": round(avg_score, 4),
         "meetings_booked": len(booked),
         "human_escalations": len(escalated),
+        "average_response_time_seconds": average_response_time_seconds,
+        "cost_per_booked_meeting": cost_per_booked_meeting,
+        "_notes": {
+            "average_response_time_seconds": (
+                "Not available for conversations created before this metric was added. "
+                "Per-message timestamps are now collected going forward."
+            ),
+            "cost_per_booked_meeting": "Gemini API inference cost only (estimated from token counts).",
+        },
     }
 
 
