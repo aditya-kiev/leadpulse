@@ -44,10 +44,14 @@ async def test_persistence_merges_saved_state_into_initial_state():
     assert call_input.get("lead_status") == "hot"
     assert call_input.get("booking_confirmed") is True
     # run_agent appends the current user message to the loaded history
-    expected_history = persisted["conversation_history"] + [
-        {"role": "user", "content": "Hello again"},
-    ]
-    assert call_input.get("conversation_history") == expected_history
+    # (with a timestamp field — check structure, not exact equality)
+    actual_history = call_input.get("conversation_history")
+    assert len(actual_history) == len(persisted["conversation_history"]) + 1
+    assert actual_history[:-1] == persisted["conversation_history"]
+    actual_last = actual_history[-1]
+    assert actual_last["role"] == "user"
+    assert actual_last["content"] == "Hello again"
+    assert isinstance(actual_last.get("timestamp"), str) and "T" in actual_last["timestamp"]
     assert call_input.get("conversation_stage") == "collecting"
     assert call_input.get("current_node") == "info_collection"
 
@@ -169,8 +173,13 @@ async def test_double_call_does_not_duplicate_conversation_history():
         assert len(hist2) == 2, (
             f"Turn 2: expected 2 entries (no duplicates), got {len(hist2)}: {hist2}"
         )
-        assert hist2[0] == {"role": "user", "content": "Hello"}
-        assert hist2[1] == {"role": "user", "content": "What's your pricing?"}
+        # User messages now include a timestamp — check fields individually
+        assert hist2[0]["role"] == "user"
+        assert hist2[0]["content"] == "Hello"
+        assert isinstance(hist2[0].get("timestamp"), str) and "T" in hist2[0]["timestamp"]
+        assert hist2[1]["role"] == "user"
+        assert hist2[1]["content"] == "What's your pricing?"
+        assert isinstance(hist2[1].get("timestamp"), str) and "T" in hist2[1]["timestamp"]
 
 
 async def test_parse_budget_handles_indian_shorthand():

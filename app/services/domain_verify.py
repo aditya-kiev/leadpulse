@@ -11,7 +11,8 @@ Verification flow:
 """
 
 import secrets
-import string
+
+import dns.resolver
 
 from app.database.models import Organization
 
@@ -33,25 +34,19 @@ def expected_txt_record_name(domain: str) -> str:
 async def verify_domain_txt(domain: str, expected_token: str) -> bool:
     """Resolve TXT records for the verification subdomain and check token.
 
-    Uses ``dnspython`` if available; falls back to PowerShell ``Resolve-DnsName``
-    on Windows. Returns True if a matching token is found.
+    Returns True if a matching token is found. Raises on network errors.
     """
     record_name = expected_txt_record_name(domain)
 
-    # Try dnspython first
     try:
-        import dns.resolver
+        answers = dns.resolver.resolve(record_name, "TXT", lifetime=10)
+    except Exception:
+        return False
 
-        try:
-            answers = dns.resolver.resolve(record_name, "TXT", lifetime=10)
-            for rdata in answers:
-                txt_value = "".join(s.decode() if isinstance(s, bytes) else s for s in rdata.strings)
-                if txt_value.strip().strip('"') == expected_token:
-                    return True
-        except Exception:
-            pass
-    except ImportError:
-        pass
+    for rdata in answers:
+        txt_value = "".join(s.decode() if isinstance(s, bytes) else s for s in rdata.strings)
+        if txt_value.strip().strip('"') == expected_token:
+            return True
 
     return False
 
