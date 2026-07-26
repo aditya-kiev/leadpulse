@@ -6,6 +6,7 @@ class Settings(BaseSettings):
 
     app_name: str = "Lead Qualification Agent"
     debug: bool = False
+    environment: str = "development"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent"
     redis_url: str | None = None

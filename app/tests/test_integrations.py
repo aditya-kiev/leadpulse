@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.integrations.base import CRMIntegration, CRMConfig, PushResult
-from app.integrations.encryption import encrypt_json, decrypt_json
+from app.integrations.encryption import encrypt_json, decrypt_json, check_production_encryption_key
 from app.integrations.registry import register_integration, get_integration_class, resolve_integration
 from app.integrations.retry import retry_with_backoff
 from app.integrations.webhook_fallback import WebhookFallbackIntegration
@@ -36,7 +36,7 @@ def test_crm_config_dataclass():
 # ── Encryption ────────────────────────────────────────────────────────────
 
 def test_encrypt_decrypt_round_trip():
-    data = {"api_key": "super-secret-123", "source": "test"}
+    data = {"api_key": "super-secret-123", "source": "test", "nested": {"inner": 42}}
     with patch("app.config.settings.settings.crm_encryption_key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
         encrypted = encrypt_json(data)
         decrypted = decrypt_json(encrypted)
@@ -48,6 +48,66 @@ def test_encrypt_decrypt_fallback_no_key():
     with patch("app.config.settings.settings.crm_encryption_key", ""):
         encrypted = encrypt_json(data)
         assert isinstance(encrypted, str)
+        decrypted = decrypt_json(encrypted)
+        assert decrypted == data
+
+
+def test_encrypt_malicious_payload_is_inert_with_key():
+    malicious = {
+        "api_key": "__import__('os').system('id')",
+        "nested": "eval('__import__(\"os\").system(\"id\")')",
+    }
+    with patch("app.config.settings.settings.crm_encryption_key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
+        encrypted = encrypt_json(malicious)
+        decrypted = decrypt_json(encrypted)
+        assert decrypted == malicious
+        assert isinstance(decrypted["api_key"], str)
+        assert "__import__" in decrypted["api_key"]
+
+
+def test_encrypt_malicious_payload_is_inert_no_key():
+    malicious = {
+        "api_key": "__import__('os').system('id')",
+        "nested": "eval('__import__(\"os\").system(\"id\")')",
+    }
+    with patch("app.config.settings.settings.crm_encryption_key", ""):
+        encrypted = encrypt_json(malicious)
+        decrypted = decrypt_json(encrypted)
+        assert decrypted == malicious
+        assert isinstance(decrypted["api_key"], str)
+        assert "__import__" in decrypted["api_key"]
+
+
+def test_encrypt_decrypt_binary_safe_values():
+    data = {
+        "token": "eyJhbGciOiJIUzI1NiJ9.dGVzdA.abc123",
+        "secret": "abc123+/=",
+        "url": "https://api.example.com/v1?key=val&other=1",
+    }
+    with patch("app.config.settings.settings.crm_encryption_key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
+        encrypted = encrypt_json(data)
+        decrypted = decrypt_json(encrypted)
+        assert decrypted == data
+
+
+def test_production_raises_without_key():
+    with patch("app.config.settings.settings.environment", "production"), \
+         patch("app.config.settings.settings.crm_encryption_key", ""):
+        with pytest.raises(RuntimeError, match="CRM_ENCRYPTION_KEY must be set"):
+            check_production_encryption_key()
+
+
+def test_production_allows_with_key():
+    with patch("app.config.settings.settings.environment", "production"), \
+         patch("app.config.settings.settings.crm_encryption_key", "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
+        check_production_encryption_key()
+
+
+def test_development_allows_fallback():
+    with patch("app.config.settings.settings.environment", "development"), \
+         patch("app.config.settings.settings.crm_encryption_key", ""):
+        data = {"api_key": "test"}
+        encrypted = encrypt_json(data)
         decrypted = decrypt_json(encrypted)
         assert decrypted == data
 
