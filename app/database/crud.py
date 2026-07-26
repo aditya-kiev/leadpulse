@@ -1,42 +1,137 @@
 import logging
-
 from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import LeadConversation
+from app.database.models import LeadConversation, Organization, User, CRMConfig
 
 logger = logging.getLogger(__name__)
 
 
-async def create_conversation(session: AsyncSession, session_id: str) -> LeadConversation:
-    logger.info("CRUD create_conversation: session_id=%s", session_id)
-    lead = LeadConversation(session_id=session_id)
+async def create_conversation(
+    session: AsyncSession,
+    session_id: str,
+    tenant_id: UUID | None = None,
+) -> LeadConversation:
+    logger.info("CRUD create_conversation: session_id=%s tenant_id=%s", session_id, tenant_id)
+    lead = LeadConversation(session_id=session_id, tenant_id=tenant_id)
     session.add(lead)
     await session.flush()
     logger.info("CRUD create_conversation: OK id=%s", lead.id)
     return lead
 
 
-async def get_conversation(session: AsyncSession, session_id: str) -> LeadConversation | None:
-    logger.info("CRUD get_conversation: session_id=%s", session_id)
-    result = await session.execute(select(LeadConversation).where(LeadConversation.session_id == session_id))
+async def get_conversation(
+    session: AsyncSession,
+    session_id: str,
+    tenant_id: UUID | None = None,
+) -> LeadConversation | None:
+    logger.info("CRUD get_conversation: session_id=%s tenant_id=%s", session_id, tenant_id)
+    stmt = select(LeadConversation).where(LeadConversation.session_id == session_id)
+    if tenant_id is not None:
+        stmt = stmt.where(LeadConversation.tenant_id == tenant_id)
+    result = await session.execute(stmt)
     lead = result.scalar_one_or_none()
     logger.info("CRUD get_conversation: found=%s", lead is not None)
     return lead
 
 
-async def update_conversation(session: AsyncSession, session_id: str, **kwargs) -> LeadConversation | None:
-    logger.info("CRUD update_conversation: session_id=%s kwargs=%s", session_id, list(kwargs.keys()))
+async def update_conversation(
+    session: AsyncSession,
+    session_id: str,
+    tenant_id: UUID | None = None,
+    **kwargs,
+) -> LeadConversation | None:
+    logger.info("CRUD update_conversation: session_id=%s tenant_id=%s kwargs=%s", session_id, tenant_id, list(kwargs.keys()))
     stmt = (
         update(LeadConversation)
         .where(LeadConversation.session_id == session_id)
         .values(**kwargs)
         .returning(LeadConversation)
     )
+    if tenant_id is not None:
+        stmt = stmt.where(LeadConversation.tenant_id == tenant_id)
     result = await session.execute(stmt)
     await session.commit()
     lead = result.scalar_one_or_none()
     logger.info("CRUD update_conversation: OK lead=%s", lead is not None)
     return lead
+
+
+async def get_conversations_by_tenant(
+    session: AsyncSession,
+    tenant_id: UUID,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[LeadConversation]:
+    stmt = (
+        select(LeadConversation)
+        .where(LeadConversation.tenant_id == tenant_id)
+        .order_by(LeadConversation.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_organization_by_id(
+    session: AsyncSession,
+    org_id: UUID,
+) -> Organization | None:
+    result = await session.execute(select(Organization).where(Organization.id == org_id))
+    return result.scalar_one_or_none()
+
+
+async def get_organization_by_slug(
+    session: AsyncSession,
+    slug: str,
+) -> Organization | None:
+    result = await session.execute(select(Organization).where(Organization.slug == slug))
+    return result.scalar_one_or_none()
+
+
+async def list_organizations(
+    session: AsyncSession,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Organization]:
+    result = await session.execute(
+        select(Organization).order_by(Organization.created_at.desc()).limit(limit).offset(offset)
+    )
+    return list(result.scalars().all())
+
+
+async def create_organization(
+    session: AsyncSession,
+    name: str,
+    slug: str,
+    plan_tier: str = "starter",
+) -> Organization:
+    org = Organization(name=name, slug=slug, plan_tier=plan_tier)
+    session.add(org)
+    await session.flush()
+    return org
+
+
+async def get_crm_config(
+    session: AsyncSession,
+    organization_id: UUID,
+    integration_type: str | None = None,
+) -> CRMConfig | None:
+    stmt = select(CRMConfig).where(CRMConfig.organization_id == organization_id, CRMConfig.is_active == True)
+    if integration_type:
+        stmt = stmt.where(CRMConfig.integration_type == integration_type)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def list_users_by_organization(
+    session: AsyncSession,
+    organization_id: UUID,
+) -> list[User]:
+    result = await session.execute(
+        select(User).where(User.organization_id == organization_id).order_by(User.created_at.desc())
+    )
+    return list(result.scalars().all())

@@ -9,6 +9,7 @@ from langgraph.graph import add_messages
 class AgentState(TypedDict):
     session_id: str
     channel: str
+    tenant_id: str | None
 
     lead_name: str | None
     company_name: str | None
@@ -39,10 +40,11 @@ class AgentState(TypedDict):
     current_question: str | None
 
 
-def get_initial_state(session_id: str, channel: str = "web") -> AgentState:
+def get_initial_state(session_id: str, channel: str = "web", tenant_id: str | None = None) -> AgentState:
     return {
         "session_id": session_id,
         "channel": channel,
+        "tenant_id": tenant_id,
         "lead_name": None,
         "company_name": None,
         "industry": None,

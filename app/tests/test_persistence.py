@@ -139,7 +139,7 @@ async def test_double_call_does_not_duplicate_conversation_history():
     async def _fake_save(session_id, state):
         store[session_id] = state
 
-    async def _fake_load(session_id):
+    async def _fake_load(session_id, tenant_id=None):
         return store.get(session_id)
 
     with patch("app.agent.graph.get_graph", return_value=test_graph), \
@@ -239,7 +239,7 @@ async def test_budget_parse_in_info_collection_round_trip():
     async def _fake_save(session_id, state):
         store[session_id] = state
 
-    async def _fake_load(session_id):
+    async def _fake_load(session_id, tenant_id=None):
         return store.get(session_id)
 
     # Mock the graph to simulate info_collection returning "80 lakh"

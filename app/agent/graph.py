@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from uuid import UUID
 
 from langchain_core.messages import HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -241,9 +242,20 @@ def get_graph() -> CompiledStateGraph:
     return _agent_graph
 
 
-async def run_agent(session_id: str, message: str, channel: str = "web") -> dict:
-    logger.debug("run_agent session=%s channel=%s", session_id, channel)
-    config: Any = {"configurable": {"thread_id": session_id}}
+async def run_agent(
+    session_id: str,
+    message: str,
+    channel: str = "web",
+    tenant_id: UUID | None = None,
+) -> dict:
+    logger.debug("run_agent session=%s channel=%s tenant_id=%s", session_id, channel, tenant_id)
+
+    # Tenant-qualified thread_id prevents cross-tenant checkpoint leakage in
+    # the in-memory MemorySaver (used within a single ainvoke for reducer
+    # consistency).  The Postgres-backed memory_service is the actual source
+    # of truth for turn-to-turn state resumption.
+    thread_key = f"{tenant_id}:{session_id}" if tenant_id else session_id
+    config: Any = {"configurable": {"thread_id": thread_key}}
 
     # Source of truth for turn-to-turn state resumption: Postgres via memory_service.
     # On every incoming message we load persisted state (lead fields, conversation_stage,
@@ -264,30 +276,27 @@ async def run_agent(session_id: str, message: str, channel: str = "web") -> dict
     # MemorySaver still provides consistency across nodes in the same turn.
     graph = get_graph()
     if graph.checkpointer is not None:
-        await graph.checkpointer.adelete_thread(session_id)
+        await graph.checkpointer.adelete_thread(thread_key)
 
-    turn_input = get_initial_state(session_id, channel)
-    # store simple dicts for messages to satisfy the TypedDict expected by the graph
+    tenant_id_str = str(tenant_id) if tenant_id else None
+    turn_input = get_initial_state(session_id, channel, tenant_id=tenant_id_str)
     turn_input["messages"] = [{"role": "user", "content": message}]
 
-    persisted = await memory_service.load_state(session_id)
+    persisted = await memory_service.load_state(session_id, tenant_id=tenant_id)
     if persisted:
         logger.debug(
-            "merged %d persisted keys for session %s", len(persisted), session_id
+            "merged %d persisted keys for session %s tenant=%s", len(persisted), session_id, tenant_id
         )
         for key, value in persisted.items():
             if value is not None and key in turn_input:
                 turn_input[key] = value
 
-    # Record the user message centrally so every turn's message appears in
-    # conversation_history — not just the first turn (greeting node).
-    # This must happen after the persisted-state merge so it appends to,
-    # rather than being overwritten by, any loaded history.
     turn_input["conversation_history"] = (
         turn_input.get("conversation_history") or []
     ) + [{"role": "user", "content": message}]
 
     result = await graph.ainvoke(turn_input, config)
+    result["tenant_id"] = tenant_id_str
     gemini_calls = gemini_call_counter.get()
     logger.debug(
         "run_agent complete: lead_status=%s stage=%s gemini_calls=%s",

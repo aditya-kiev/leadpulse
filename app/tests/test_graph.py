@@ -292,7 +292,7 @@ async def test_cold_lead_gets_new_replies_on_every_turn():
     async def _fake_save(session_id, state):
         store[session_id] = state
 
-    async def _fake_load(session_id):
+    async def _fake_load(session_id, tenant_id=None):
         return store.get(session_id)
 
     with patch("app.agent.graph.get_graph", return_value=test_graph), \

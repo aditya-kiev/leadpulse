@@ -182,7 +182,7 @@ async def test_lead_intent_survives_postgres_round_trip():
     async def _fake_save(session_id, state):
         store[session_id] = state
 
-    async def _fake_load(session_id):
+    async def _fake_load(session_id, tenant_id=None):
         return store.get(session_id)
 
     # ---- Turn 1: greeting sets lead_intent="purchase" ----

@@ -1,11 +1,11 @@
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.agent.graph import run_agent
 from app.agent.gemini import GeminiRateLimitError
-from app.api.deps import verify_api_key
+from app.api.deps import verify_api_key, authenticate_request
 from app.models.schemas import (
     MessageIn,
     MessageOut,
@@ -19,20 +19,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
+def _resolve_tenant_id(request: Request) -> uuid.UUID | None:
+    return getattr(request.state, "tenant_id", None)
+
+
 @router.post("/start", response_model=StartConversationOut)
 async def start_conversation(
-    payload: StartConversationIn, _auth: None = Depends(verify_api_key)
+    request: Request,
+    payload: StartConversationIn,
+    _auth: tuple = Depends(authenticate_request),
 ) -> StartConversationOut:
     session_id = payload.session_id or str(uuid.uuid4())
-    logger.debug("start_conversation session=%s", session_id)
+    tenant_id = _resolve_tenant_id(request)
+    logger.debug("start_conversation session=%s tenant_id=%s", session_id, tenant_id)
     try:
         result = await run_agent(
-            session_id, "Hi, I'm interested in your services.", payload.channel
+            session_id, "Hi, I'm interested in your services.", payload.channel, tenant_id=tenant_id
         )
 
         state_persisted = True
         try:
-            await memory_service.save_state(session_id, result)
+            await memory_service.save_state(session_id, result, tenant_id=tenant_id)
         except Exception as db_err:
             state_persisted = False
             logger.exception(
@@ -68,15 +75,21 @@ async def start_conversation(
 
 @router.post("/message", response_model=MessageOut)
 async def handle_message(
-    payload: MessageIn, _auth: None = Depends(verify_api_key)
+    request: Request,
+    payload: MessageIn,
+    _auth: tuple = Depends(authenticate_request),
 ) -> MessageOut:
-    logger.debug("handle_message session=%s", payload.session_id)
+    tenant_id = _resolve_tenant_id(request)
+    logger.debug("handle_message session=%s tenant_id=%s", payload.session_id, tenant_id)
     try:
-        result = await run_agent(payload.session_id, payload.message, payload.channel)
+        result = await run_agent(
+            payload.session_id, payload.message, payload.channel,
+            tenant_id=tenant_id,
+        )
 
         state_persisted = True
         try:
-            await memory_service.save_state(payload.session_id, result)
+            await memory_service.save_state(payload.session_id, result, tenant_id=tenant_id)
         except Exception as db_err:
             state_persisted = False
             logger.exception(

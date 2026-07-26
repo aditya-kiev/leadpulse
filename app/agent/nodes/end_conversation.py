@@ -16,8 +16,8 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
         user_msgs = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
-        logger.info("NODE end_conversation ENTERED: session=%s lead_status=%s",
-                    state.get("session_id"), state.get("lead_status"))
+        logger.info("NODE end_conversation ENTERED: session=%s tenant=%s lead_status=%s",
+                    state.get("session_id"), state.get("tenant_id"), state.get("lead_status"))
 
         lead_data = {
             k: state.get(k) for k in [
@@ -26,7 +26,7 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
                 "meeting_time", "booking_confirmed", "human_escalated",
             ]
         }
-        update_crm(state["session_id"], lead_data)
+        update_crm(state["session_id"], lead_data, tenant_id=state.get("tenant_id"))
         logger.info("NODE end_conversation: CRM updated")
 
         response = await model.ainvoke([

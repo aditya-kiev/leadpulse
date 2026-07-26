@@ -5,6 +5,7 @@ import pytest
 
 os.environ["GEMINI_API_KEY"] = "test-fake-key"
 os.environ["LANGSMITH_API_KEY"] = "ls-test-fake"
+os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-key-for-testing"
 
 
 @pytest.fixture(autouse=True)
@@ -21,4 +22,11 @@ def mock_openai():
 @pytest.fixture(autouse=True)
 def mock_db_session():
     with patch("app.database.session.async_session_factory"):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_settings_auth_disabled():
+    """By default, run tests with auth_enabled=False for backward compat."""
+    with patch("app.config.settings.settings.auth_enabled", False):
         yield

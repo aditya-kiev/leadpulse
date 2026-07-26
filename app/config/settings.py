@@ -47,5 +47,15 @@ class Settings(BaseSettings):
     calendar_availability_days: int = 14
     meeting_duration_minutes: int = 30
 
+    # Multi-tenancy & auth
+    auth_enabled: bool = False
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_ttl_minutes: int = 30
+    jwt_refresh_token_ttl_days: int = 30
+
+    # Default tenant for single-tenant (legacy) mode
+    default_tenant_name: str = "Default Organization"
+
 
 settings = Settings()
