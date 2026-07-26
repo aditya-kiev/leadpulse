@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"
 
+    # White-labeling / custom domains
+    app_hostname: str = ""
+
     # Sentry
     sentry_dsn: str = ""
 

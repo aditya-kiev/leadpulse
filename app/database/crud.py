@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import LeadConversation, Organization, User, CRMConfig, PushLog
+from app.database.models import LeadConversation, Organization, User, CRMConfig, PushLog, UsageLog, DailyOrgSummary
 from app.database.session import async_session_factory
 
 logger = logging.getLogger(__name__)
@@ -116,6 +116,21 @@ async def create_organization(
     return org
 
 
+async def update_organization(
+    session: AsyncSession,
+    org_id: UUID,
+    **kwargs,
+) -> Organization | None:
+    org = await get_organization_by_id(session, org_id)
+    if org is None:
+        return None
+    for k, v in kwargs.items():
+        if hasattr(org, k):
+            setattr(org, k, v)
+    await session.flush()
+    return org
+
+
 async def get_crm_config(
     session: AsyncSession,
     organization_id: UUID,
@@ -163,6 +178,90 @@ async def log_crm_push(
         await session.flush()
         await session.commit()
         return log
+
+
+async def log_usage(
+    organization_id: UUID | None = None,
+    session_id: str | None = None,
+    model: str = "unknown",
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    estimated_cost: float | None = None,
+) -> UsageLog:
+    async with async_session_factory() as session:
+        log = UsageLog(
+            organization_id=organization_id,
+            session_id=session_id,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            estimated_cost=estimated_cost,
+        )
+        session.add(log)
+        await session.flush()
+        await session.commit()
+        return log
+
+
+async def get_usage_logs(
+    session: AsyncSession,
+    organization_id: UUID,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 1000,
+) -> list[UsageLog]:
+    stmt = select(UsageLog).where(UsageLog.organization_id == organization_id)
+    if start_date:
+        stmt = stmt.where(UsageLog.created_at >= start_date)
+    if end_date:
+        stmt = stmt.where(UsageLog.created_at <= end_date)
+    stmt = stmt.order_by(UsageLog.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def upsert_daily_summary(
+    session: AsyncSession,
+    organization_id: UUID,
+    date: str,
+    **kwargs,
+) -> DailyOrgSummary:
+    stmt = select(DailyOrgSummary).where(
+        DailyOrgSummary.organization_id == organization_id,
+        DailyOrgSummary.date == date,
+    )
+    result = await session.execute(stmt)
+    existing = result.scalar_one_or_none()
+    if existing:
+        for k, v in kwargs.items():
+            setattr(existing, k, v)
+        await session.flush()
+        return existing
+    summary = DailyOrgSummary(organization_id=organization_id, date=date, **kwargs)
+    session.add(summary)
+    await session.flush()
+    return summary
+
+
+async def get_daily_summaries(
+    session: AsyncSession,
+    organization_id: UUID,
+    start_date: str,
+    end_date: str,
+) -> list[DailyOrgSummary]:
+    stmt = (
+        select(DailyOrgSummary)
+        .where(
+            DailyOrgSummary.organization_id == organization_id,
+            DailyOrgSummary.date >= start_date,
+            DailyOrgSummary.date <= end_date,
+        )
+        .order_by(DailyOrgSummary.date.asc())
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_push_logs(

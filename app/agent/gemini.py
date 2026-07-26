@@ -3,8 +3,9 @@ import logging
 import time
 from collections import deque
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+from uuid import UUID
 
 from app.config.settings import settings
 
@@ -173,20 +174,43 @@ def _get_retry_delay(error: BaseException) -> float | None:
     return None
 
 
+_last_usage: ContextVar[dict | None] = ContextVar("_last_usage", default=None)
+
+
+def get_last_usage() -> dict | None:
+    return _last_usage.get()
+
+
+def _extract_usage(response: Any) -> dict:
+    usage = {}
+    try:
+        meta = getattr(response, "response_metadata", {}) or {}
+        if "usage_metadata" in meta:
+            usage = dict(meta["usage_metadata"])
+        elif hasattr(response, "usage_metadata"):
+            usage = dict(response.usage_metadata)
+    except Exception:
+        pass
+    return usage
+
+
+_GEMINI_COST_PER_1K_INPUT = 0.000075
+_GEMINI_COST_PER_1K_OUTPUT = 0.00030
+
+
+def estimate_gemini_cost(prompt_tokens: int, completion_tokens: int) -> float:
+    return (prompt_tokens / 1000) * _GEMINI_COST_PER_1K_INPUT + (completion_tokens / 1000) * _GEMINI_COST_PER_1K_OUTPUT
+
+
 @dataclass
 class RetryingGeminiModel:
-    """Thin proxy that retries transient Gemini rate-limit failures.
-
-    A sliding-window rate limiter paces every attempt through the retry loop
-    so that actual API calls stay under the configured RPM ceiling
-    (``settings.gemini_rpm_limit``).  Server-suggested retry delays
-    (``Retry-After`` header, ``RetryInfo`` from ``google.genai.errors.ClientError``)
-    are honoured when available; otherwise exponential backoff is used.
-    """
+    """Thin proxy that retries transient Gemini rate-limit failures."""
 
     model: Any
     max_retries: int = 2
     initial_backoff_seconds: float = 0.5
+    tenant_id: UUID | None = None
+    session_id: str | None = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.model, name)
@@ -199,13 +223,13 @@ class RetryingGeminiModel:
         attempts = self.max_retries + 1
 
         for attempt in range(1, attempts + 1):
-            # Gate every attempt through the sliding-window rate limiter —
-            # not just once per ainvoke call — so retried requests also
-            # count against the RPM ceiling.
             await _acquire_rate_limit()
 
             try:
-                return await self.model.ainvoke(*args, **kwargs)
+                response = await self.model.ainvoke(*args, **kwargs)
+                usage = _extract_usage(response)
+                _last_usage.set(usage)
+                return response
             except Exception as exc:
                 if not _is_rate_limited_gemini_error(exc):
                     raise
@@ -222,7 +246,6 @@ class RetryingGeminiModel:
                         "Please try again in a minute."
                     ) from exc
 
-                # Use server-suggested delay if available, else exponential
                 suggested = _get_retry_delay(exc)
                 sleep_for = suggested if suggested is not None else delay
                 await asyncio.sleep(sleep_for)

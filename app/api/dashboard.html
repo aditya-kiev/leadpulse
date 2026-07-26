@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LeadPulse — Analytics Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #F5F5F5;
+    --panel: #FFFFFF;
+    --ink: #1A1A1A;
+    --ink-soft: #555;
+    --muted: #888;
+    --hairline: #E0E0E0;
+    --accent: #4F46E5;
+    --accent-hover: #4338CA;
+    --green: #059669;
+    --green-soft: #ECFDF5;
+    --amber: #D97706;
+    --amber-soft: #FFFBEB;
+    --red: #DC2626;
+    --red-soft: #FEF2F2;
+    --blue: #2563EB;
+    --blue-soft: #EFF6FF;
+    --radius: 8px;
+    --font: 'Inter', system-ui, sans-serif;
+  }
+  body {
+    background: var(--bg);
+    font-family: var(--font);
+    color: var(--ink);
+    min-height: 100vh;
+    padding: 24px 32px;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  .header h1 span { color: var(--accent); }
+  .header-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .header-controls label { font-size: 13px; color: var(--ink-soft); font-weight: 500; }
+  .header-controls input[type="date"] {
+    padding: 6px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: 13px;
+  }
+  .btn {
+    padding: 7px 16px;
+    border: none;
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    transition: background 0.15s;
+  }
+  .btn:hover { background: var(--accent-hover); }
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--ink-soft);
+  }
+  .btn-outline:hover { background: var(--bg); }
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .metric-card {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .metric-card .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin-bottom: 6px;
+  }
+  .metric-card .value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .metric-card .sub {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 4px;
+  }
+  .chart-section {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 28px;
+  }
+  .chart-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+  .chart-container { position: relative; width: 100%; overflow-x: auto; }
+  .chart-container canvas { display: block; width: 100%; height: 260px; }
+  .detail-section {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+  }
+  .detail-section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--hairline); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--hairline); }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .badge-hot { background: var(--red-soft); color: var(--red); }
+  .badge-warm { background: var(--amber-soft); color: var(--amber); }
+  .badge-cold { background: var(--blue-soft); color: var(--blue); }
+  .error-banner {
+    background: var(--red-soft);
+    color: var(--red);
+    padding: 10px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    font-size: 13px;
+    display: none;
+  }
+  .loading { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid var(--hairline); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; margin-bottom: 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .funnel-bar {
+    display: flex; height: 32px; border-radius: 6px; overflow: hidden; margin: 8px 0;
+  }
+  .funnel-bar .seg {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; color: #fff; transition: width 0.3s;
+  }
+  .funnel-bar .seg.greeting { background: #94A3B8; }
+  .funnel-bar .seg.collecting { background: #64748B; }
+  .funnel-bar .seg.qualified { background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Lead<span>Pulse</span> Analytics</h1>
+  <div class="header-controls">
+    <label>From</label><input type="date" id="startDate">
+    <label>To</label><input type="date" id="endDate">
+    <button class="btn" onclick="loadData()">Refresh</button>
+    <button class="btn btn-outline" onclick="setThisMonth()">This Month</button>
+  </div>
+</div>
+
+<div class="error-banner" id="errorBanner"></div>
+
+<div id="loadingState" class="loading">
+  <div class="spinner"></div>
+  <div>Loading dashboard data...</div>
+</div>
+
+<div id="dashboardContent" style="display:none">
+  <div class="metrics-grid" id="metricsGrid"></div>
+
+  <div class="chart-section">
+    <h2>Daily Trend — Conversations & Meetings</h2>
+    <div class="chart-container">
+      <canvas id="trendChart"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-section">
+    <h2>Lead Funnel</h2>
+    <div id="funnelSection"></div>
+  </div>
+
+  <div class="detail-section">
+    <h2>Daily Breakdown</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Conversations</th>
+          <th>Hot</th>
+          <th>Warm</th>
+          <th>Cold</th>
+          <th>Meetings</th>
+          <th>Escalations</th>
+          <th>Avg Score</th>
+          <th>Cost</th>
+        </tr>
+      </thead>
+      <tbody id="dailyTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API_BASE = '/analytics';
+
+function setThisMonth() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  document.getElementById('startDate').value = y + '-' + m + '-01';
+  document.getElementById('endDate').value = now.toISOString().slice(0, 10);
+  loadData();
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBanner');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`HTTP ${r.status}: ${body.slice(0, 200)}`);
+  }
+  return r.json();
+}
+
+function fmtPct(v) { return (v * 100).toFixed(1) + '%'; }
+
+function renderMetrics(metrics) {
+  const grid = document.getElementById('metricsGrid');
+  const lv = metrics.lead_volume;
+  const cards = [
+    { label: 'Total Conversations', value: lv.total, sub: '' },
+    { label: 'Hot Leads', value: lv.hot, sub: lv.total ? fmtPct(lv.hot / lv.total) : '', cls: 'badge-hot' },
+    { label: 'Warm Leads', value: lv.warm, sub: lv.total ? fmtPct(lv.warm / lv.total) : '', cls: 'badge-warm' },
+    { label: 'Cold Leads', value: lv.cold, sub: lv.total ? fmtPct(lv.cold / lv.total) : '', cls: 'badge-cold' },
+    { label: 'Qualification Rate', value: fmtPct(metrics.qualification_rate), sub: '' },
+    { label: 'Booking Rate', value: fmtPct(metrics.booking_rate), sub: '' },
+    { label: 'Avg Score', value: metrics.average_qualification_score.toFixed(2), sub: '/ 1.0' },
+    { label: 'Meetings Booked', value: metrics.meetings_booked, sub: '' },
+  ];
+  grid.innerHTML = cards.map(c => `
+    <div class="metric-card">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}</div>
+      ${c.sub ? '<div class="sub">' + c.sub + '</div>' : ''}
+    </div>
+  `).join('');
+}
+
+function renderFunnel(metrics) {
+  const f = metrics.funnel;
+  const total = f.total || 1;
+  const el = document.getElementById('funnelSection');
+  const greetPct = (f.greeting / total * 100).toFixed(0);
+  const collectPct = (f.collecting / total * 100).toFixed(0);
+  const qualPct = (f.qualified / total * 100).toFixed(0);
+  el.innerHTML = `
+    <div class="funnel-bar">
+      <div class="seg greeting" style="width:${greetPct}%">${f.greeting}</div>
+      <div class="seg collecting" style="width:${collectPct}%">${f.collecting}</div>
+      <div class="seg qualified" style="width:${qualPct}%">${f.qualified}</div>
+    </div>
+    <div style="display:flex;gap:24px;font-size:12px;color:var(--ink-soft)">
+      <span>● Greeting: ${f.greeting}</span>
+      <span>● Info Collection: ${f.collecting}</span>
+      <span>● Qualified: ${f.qualified}</span>
+    </div>
+  `;
+}
+
+function renderTrendChart(dailyData) {
+  const canvas = document.getElementById('trendChart');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const W = Math.max(rect.width, 600);
+  const H = 260;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.scale(dpr, dpr);
+
+  const dates = dailyData.map(d => d.date.slice(5));
+  const convos = dailyData.map(d => d.total_conversations);
+  const meetings = dailyData.map(d => d.meetings_booked);
+  const maxVal = Math.max(...convos, 1);
+
+  const pad = { top: 20, bottom: 28, left: 40, right: 16 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // grid lines
+  ctx.strokeStyle = '#E0E0E0';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (ch / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#888'; ctx.font = '11px Inter'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(maxVal - (maxVal / 4) * i), pad.left - 8, y + 4);
+  }
+
+  if (dates.length === 0) return;
+
+  const xStep = cw / (dates.length - 1 || 1);
+
+  // line: conversations
+  ctx.beginPath();
+  ctx.strokeStyle = '#4F46E5';
+  ctx.lineWidth = 2.5;
+  convos.forEach((v, i) => {
+    const x = pad.left + i * xStep;
+    const y = pad.top + ch - (v / maxVal) * ch;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // line: meetings
+  ctx.beginPath();
+  ctx.strokeStyle = '#059669';
+  ctx.lineWidth = 2.5;
+  meetings.forEach((v, i) => {
+    const x = pad.left + i * xStep;
+    const y = pad.top + ch - (v / maxVal) * ch;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // x-axis labels
+  ctx.fillStyle = '#888';
+  ctx.font = '10px Inter';
+  ctx.textAlign = 'center';
+  const step = Math.max(1, Math.floor(dates.length / 10));
+  dates.forEach((d, i) => {
+    if (i % step === 0 || i === dates.length - 1) {
+      ctx.fillText(d, pad.left + i * xStep, H - 4);
+    }
+  });
+
+  // legend
+  ctx.fillStyle = '#4F46E5'; ctx.fillRect(W - 140, 8, 10, 10);
+  ctx.fillStyle = '#1A1A1A'; ctx.font = '11px Inter'; ctx.textAlign = 'left';
+  ctx.fillText('Conversations', W - 126, 18);
+  ctx.fillStyle = '#059669'; ctx.fillRect(W - 50, 8, 10, 10);
+  ctx.fillStyle = '#1A1A1A'; ctx.fillText('Meetings', W - 36, 18);
+}
+
+function renderDailyTable(dailyData) {
+  const tbody = document.getElementById('dailyTableBody');
+  if (dailyData.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">No data for this period</td></tr>';
+    return;
+  }
+  tbody.innerHTML = dailyData.map(d => `
+    <tr>
+      <td>${d.date}</td>
+      <td><strong>${d.total_conversations}</strong></td>
+      <td><span class="badge badge-hot">${d.hot_leads}</span></td>
+      <td><span class="badge badge-warm">${d.warm_leads}</span></td>
+      <td><span class="badge badge-cold">${d.cold_leads}</span></td>
+      <td>${d.meetings_booked}</td>
+      <td>${d.human_escalations}</td>
+      <td>${d.avg_qualification_score != null ? d.avg_qualification_score.toFixed(2) : '-'}</td>
+      <td>$${d.total_cost.toFixed(2)}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadData() {
+  hideError();
+  document.getElementById('loadingState').style.display = 'block';
+  document.getElementById('dashboardContent').style.display = 'none';
+
+  const sd = document.getElementById('startDate').value;
+  const ed = document.getElementById('endDate').value;
+  const params = new URLSearchParams();
+  if (sd) params.set('start_date', sd);
+  if (ed) params.set('end_date', ed);
+  const qs = params.toString();
+
+  try {
+    const [metrics, daily] = await Promise.all([
+      fetchJSON(API_BASE + '/metrics' + (qs ? '?' + qs : '')),
+      fetchJSON(API_BASE + '/daily' + (qs ? '?' + qs : '')),
+    ]);
+    renderMetrics(metrics);
+    renderFunnel(metrics);
+    renderTrendChart(daily);
+    renderDailyTable(daily);
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('dashboardContent').style.display = 'block';
+  } catch (err) {
+    document.getElementById('loadingState').style.display = 'none';
+    showError('Failed to load data: ' + err.message);
+  }
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', () => {
+  setThisMonth();
+});
+</script>
+</body>
+</html>

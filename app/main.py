@@ -10,6 +10,8 @@ from app.api.conversation import router as conversation_router
 from app.api.debug import router as debug_router
 from app.api.demo import router as demo_router
 from app.api.auth import router as auth_router
+from app.api.analytics import router as analytics_router
+from app.api.branding import router as branding_router
 from app.config.settings import settings
 from app.database.session import init_db
 from app.models.schemas import HealthOut
@@ -96,12 +98,31 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def resolve_tenant_from_domain(request: Request, call_next):
+    """Auto-detect tenant from Host header if not already set by auth."""
+    if getattr(request.state, "tenant_id", None) is None:
+        host = request.headers.get("host")
+        if host:
+            from app.services.domain import resolve_tenant_from_host
+            try:
+                tid = await resolve_tenant_from_host(host)
+                if tid:
+                    request.state.tenant_id = tid
+            except Exception:
+                pass
+    response = await call_next(request)
+    return response
+
+
 app.include_router(webhook_router)
 app.include_router(conversation_router)
 app.include_router(auth_router)
 app.include_router(demo_router)
 if settings.debug:
     app.include_router(debug_router)
+app.include_router(analytics_router)
+app.include_router(branding_router)
 
 
 @app.get("/health", response_model=HealthOut)

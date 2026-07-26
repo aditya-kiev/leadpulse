@@ -99,3 +99,39 @@ class PushLog(Base):
     response_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UsageLog(Base):
+    __tablename__ = "usage_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(default=0)
+    completion_tokens: Mapped[int] = mapped_column(default=0)
+    total_tokens: Mapped[int] = mapped_column(default=0)
+    estimated_cost: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class DailyOrgSummary(Base):
+    __tablename__ = "daily_org_summaries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
+    date: Mapped[str] = mapped_column(String(10), nullable=False)
+    total_conversations: Mapped[int] = mapped_column(default=0)
+    qualified_leads: Mapped[int] = mapped_column(default=0)
+    hot_leads: Mapped[int] = mapped_column(default=0)
+    warm_leads: Mapped[int] = mapped_column(default=0)
+    cold_leads: Mapped[int] = mapped_column(default=0)
+    meetings_booked: Mapped[int] = mapped_column(default=0)
+    human_escalations: Mapped[int] = mapped_column(default=0)
+    gemini_calls: Mapped[int] = mapped_column(default=0)
+    total_prompt_tokens: Mapped[int] = mapped_column(default=0)
+    total_completion_tokens: Mapped[int] = mapped_column(default=0)
+    total_cost: Mapped[float] = mapped_column(default=0.0)
+    avg_qualification_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

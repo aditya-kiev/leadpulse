@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.state import AgentState, get_initial_state
-from app.agent.gemini import RetryingGeminiModel, gemini_call_counter
+from app.agent.gemini import RetryingGeminiModel, gemini_call_counter, get_last_usage, estimate_gemini_cost
 from app.agent.nodes.greeting import create_greeting_node
 from app.agent.nodes.info_collection import create_info_collection_node
 from app.agent.nodes.qualification import create_qualification_node
@@ -298,6 +298,26 @@ async def run_agent(
     result = await graph.ainvoke(turn_input, config)
     result["tenant_id"] = tenant_id_str
     gemini_calls = gemini_call_counter.get()
+    usage = get_last_usage()
+    if usage:
+        prompt_tokens = usage.get("prompt_token_count") or usage.get("input_tokens") or 0
+        completion_tokens = usage.get("candidates_token_count") or usage.get("output_tokens") or 0
+        total_tokens = usage.get("total_token_count") or usage.get("total_tokens") or 0
+        estimated_cost = estimate_gemini_cost(prompt_tokens, completion_tokens)
+        try:
+            from app.database.crud import log_usage
+            await log_usage(
+                organization_id=tenant_id,
+                session_id=session_id,
+                model=settings.gemini_model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                estimated_cost=estimated_cost,
+            )
+        except Exception as log_err:
+            logger.warning("usage logging failed session=%s: %s", session_id, log_err)
+
     logger.debug(
         "run_agent complete: lead_status=%s stage=%s gemini_calls=%s",
         result.get("lead_status"),
