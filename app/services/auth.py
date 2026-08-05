@@ -13,6 +13,18 @@ from app.database.models import User, Organization
 logger = logging.getLogger(__name__)
 
 
+def check_jwt_secret_configured() -> None:
+    """Raise RuntimeError if AUTH_ENABLED=true but JWT_SECRET_KEY is unset."""
+    if settings.auth_enabled and not settings.jwt_secret_key:
+        raise RuntimeError(
+            "JWT_SECRET_KEY must be set when AUTH_ENABLED=true. "
+            "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+
+
+check_jwt_secret_configured()
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 

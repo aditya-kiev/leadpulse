@@ -7,6 +7,7 @@ from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.config.settings import settings
 from app.services.auth import (
+    check_jwt_secret_configured,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -360,6 +361,28 @@ class TestTenantIsolation:
                         json={"session_id": "test-session", "message": "Hello"},
                     )
                     assert response.status_code == 200
+
+    def test_jwt_secret_guard_raises_when_auth_enabled_without_secret(self):
+        """AUTH_ENABLED=true with an empty JWT_SECRET_KEY must fail fast."""
+        with patch("app.config.settings.settings.auth_enabled", True), \
+             patch("app.config.settings.settings.jwt_secret_key", ""):
+            with pytest.raises(RuntimeError, match="JWT_SECRET_KEY must be set"):
+                check_jwt_secret_configured()
+
+    def test_jwt_secret_guard_ok_when_auth_enabled_with_secret(self):
+        """AUTH_ENABLED=true with a JWT_SECRET_KEY set must not raise."""
+        with patch("app.config.settings.settings.auth_enabled", True), \
+             patch("app.config.settings.settings.jwt_secret_key", "test-secret"):
+            check_jwt_secret_configured()
+
+    def test_jwt_secret_guard_ok_when_auth_disabled(self):
+        """AUTH_ENABLED=false must never raise, regardless of JWT_SECRET_KEY."""
+        with patch("app.config.settings.settings.auth_enabled", False), \
+             patch("app.config.settings.settings.jwt_secret_key", ""):
+            check_jwt_secret_configured()
+        with patch("app.config.settings.settings.auth_enabled", False), \
+             patch("app.config.settings.settings.jwt_secret_key", "test-secret"):
+            check_jwt_secret_configured()
 
     @pytest.mark.asyncio
     async def test_create_conversation_stores_tenant_id(self):
