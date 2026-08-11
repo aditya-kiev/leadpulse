@@ -1,5 +1,7 @@
 import asyncio
+import hashlib
 import logging
+import re
 from datetime import datetime, timezone
 
 from app.config.settings import settings
@@ -7,6 +9,19 @@ from app.config.settings import settings
 logger = logging.getLogger(__name__)
 
 _stub_sms_log: list[dict] = []
+
+
+def _mask_phone(phone: str) -> str:
+    """Return a masked phone number (e.g. ``+1•••2345``) for logs."""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) <= 4:
+        return "*" * len(digits)
+    return "*" * (len(digits) - 4) + digits[-4:]
+
+
+def _body_fingerprint(body: str) -> str:
+    digest = hashlib.sha256((body or "").encode("utf-8")).hexdigest()[:12]
+    return f"len={len(body or '')} sha256={digest}"
 
 
 async def send_sms(to: str, body: str) -> dict:
@@ -19,7 +34,7 @@ async def send_sms(to: str, body: str) -> dict:
     now = datetime.now(timezone.utc).isoformat()
 
     if not settings.twilio_account_sid:
-        logger.debug("sms stub: to=%s body=%s", to, body[:60])
+        logger.debug("sms stub: to=%s body=%s", _mask_phone(to), _body_fingerprint(body))
         entry = {
             "sid": f"stub-{len(_stub_sms_log)}",
             "status": "sent",
@@ -41,7 +56,7 @@ async def send_sms(to: str, body: str) -> dict:
 
     try:
         message = await asyncio.to_thread(_send)
-        logger.debug("sms sent: sid=%s to=%s status=%s", message.sid, to, message.status)
+        logger.debug("sms sent: sid=%s to=%s status=%s", message.sid, _mask_phone(to), message.status)
         return {
             "sid": message.sid,
             "status": message.status,

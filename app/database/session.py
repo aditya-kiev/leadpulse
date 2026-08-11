@@ -5,12 +5,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config.settings import settings
+from app.services.logging_config import redact
 
 logger = logging.getLogger(__name__)
 
 
 engine = create_async_engine(settings.database_url, echo=settings.debug, pool_size=10, max_overflow=20)
-logger.info("DB: engine created url=%s echo=%s", settings.database_url, settings.debug)
+logger.info("DB: engine created url=%s echo=%s", redact(settings.database_url), settings.debug)
 
 async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 logger.info("DB: async_session_factory created")

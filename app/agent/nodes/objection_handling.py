@@ -5,7 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
-from app.agent.nodes.helpers import safe_text
+from app.agent.nodes.helpers import log_fingerprint, safe_text
 
 logger = logging.getLogger("graph.node.objection_handling")
 
@@ -19,7 +19,7 @@ def create_objection_handling_node(model: ChatGoogleGenerativeAI):
         user_msgs = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
-        logger.info("NODE objection_handling ENTERED: user_message=%s", user_message[:50])
+        logger.info("NODE objection_handling ENTERED: user_message=%s", log_fingerprint(user_message))
 
         # Read objection_type already computed by handle_next (keyword pre-filter
         # or LLM) — no need to re-detect from scratch.
@@ -46,7 +46,7 @@ def create_objection_handling_node(model: ChatGoogleGenerativeAI):
             HumanMessage(content=user_message),
         ])
         response_text = safe_text(response.content)
-        logger.info("NODE objection_handling EXIT: type=%s response=%s", objection_type, response_text[:60])
+        logger.info("NODE objection_handling EXIT: type=%s response=%s", objection_type, log_fingerprint(response_text))
 
         return {
             "messages": [AIMessage(content=response.content)],

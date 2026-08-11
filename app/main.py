@@ -20,6 +20,33 @@ from app.services.logging_config import configure_logging
 configure_logging(environment=settings.environment, debug=settings.debug)
 logger = logging.getLogger(__name__)
 
+
+def check_api_key_configured() -> None:
+    """Raise RuntimeError if API_KEY is unset — never silently skip auth.
+
+    An empty API_KEY means every webhook request is unauthenticated in
+    single-tenant mode (``authenticate_request`` short-circuits). That is
+    unacceptable once real client lead data flows through the app.
+    """
+    if not settings.api_key:
+        raise RuntimeError(
+            "API_KEY must be set. Generate one with: "
+            "python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+        )
+
+
+def check_allowed_origins_production() -> None:
+    """Raise RuntimeError if ENV=production and ALLOWED_ORIGINS is wildcard."""
+    if settings.environment == "production" and "*" in (settings.allowed_origins or []):
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must not contain '*' when ENV=production. "
+            "List the explicit dashboard origins instead."
+        )
+
+
+check_api_key_configured()
+check_allowed_origins_production()
+
 _redis_client = None
 
 
@@ -119,7 +146,7 @@ app.include_router(webhook_router)
 app.include_router(conversation_router)
 app.include_router(auth_router)
 app.include_router(demo_router)
-if settings.debug:
+if settings.debug and settings.environment != "production":
     app.include_router(debug_router)
 app.include_router(analytics_router)
 app.include_router(branding_router)

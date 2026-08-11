@@ -64,7 +64,7 @@ class FollowUpBossIntegration(CRMIntegration):
                     raw_response=data,
                 )
         except httpx.HTTPStatusError as e:
-            logger.error("FUB push failed tenant=%s status=%s body=%s", self.tenant_id, e.response.status_code, e.response.text)
+            logger.error("FUB push failed tenant=%s status=%s", self.tenant_id, e.response.status_code)
             return PushResult(success=False, status=f"http_{e.response.status_code}", error_message=e.response.text[:500])
         except Exception as e:
             logger.error("FUB push exception tenant=%s: %s", self.tenant_id, e)

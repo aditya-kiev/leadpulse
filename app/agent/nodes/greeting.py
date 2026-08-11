@@ -5,7 +5,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
-from app.agent.nodes.helpers import safe_text
+from app.agent.nodes.helpers import log_fingerprint, safe_text
 from app.config.settings import settings as _settings
 
 logger = logging.getLogger("graph.node.greeting")
@@ -48,7 +48,7 @@ def create_greeting_node(model: ChatGoogleGenerativeAI):
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
         logger.info("NODE greeting ENTERED: session=%s user_msg=%s",
-                    state.get("session_id"), user_message[:50])
+                    state.get("session_id"), log_fingerprint(user_message))
 
         known_info = {
             k: v for k, v in {
@@ -69,7 +69,7 @@ def create_greeting_node(model: ChatGoogleGenerativeAI):
             HumanMessage(content=user_message),
         ])
         text = safe_text(response.content)
-        logger.info("NODE greeting: response=%s", text[:100])
+        logger.info("NODE greeting: response=%s", log_fingerprint(text))
 
         lead_intent, lead_type, reply = _parse_combined_response(text, _settings.vertical)
 

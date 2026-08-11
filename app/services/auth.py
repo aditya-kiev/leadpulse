@@ -95,5 +95,7 @@ async def create_user(
     )
     session.add(user)
     await session.flush()
-    logger.info("Created user: id=%s email=%s role=%s org=%s", user.id, user.email, role, organization_id)
+    local, _, domain = email.partition("@")
+    masked_email = f"{local[:2]}***@{domain}" if domain else "***"
+    logger.info("Created user: id=%s email=%s role=%s org=%s", user.id, masked_email, role, organization_id)
     return user

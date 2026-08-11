@@ -6,6 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from app.config.settings import settings
+from app.services.logging_config import redact
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ async def get_redis():
                     retry_on_timeout=False,
                 )
                 await _redis.ping()
-                logger.info("Redis connected: %s", settings.redis_url)
+                logger.info("Redis connected: %s", redact(settings.redis_url))
             except Exception as e:
                 logger.warning("Redis unavailable, running without Redis: %s", e)
                 _redis = None

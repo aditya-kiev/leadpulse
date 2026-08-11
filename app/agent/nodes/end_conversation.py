@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
-from app.agent.nodes.helpers import safe_text
+from app.agent.nodes.helpers import log_fingerprint, safe_text
 from app.agent.tools.crm import update_crm
 
 logger = logging.getLogger("graph.node.end_conversation")
@@ -53,7 +53,7 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
         ])
         response_text = safe_text(response.content)
         logger.info("NODE end_conversation EXIT: session=%s response=%s",
-                    state.get("session_id"), response_text[:60])
+                    state.get("session_id"), log_fingerprint(response_text))
 
         return {
             "messages": [AIMessage(content=response.content)],

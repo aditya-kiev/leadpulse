@@ -6,6 +6,7 @@ import pytest
 os.environ["GEMINI_API_KEY"] = "test-fake-key"
 os.environ["LANGSMITH_API_KEY"] = "ls-test-fake"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-key-for-testing"
+os.environ["API_KEY"] = "test-master-api-key"
 
 
 @pytest.fixture(autouse=True)

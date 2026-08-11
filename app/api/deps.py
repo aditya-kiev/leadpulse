@@ -1,4 +1,6 @@
 import logging
+import time
+from collections import defaultdict, deque
 from uuid import UUID
 
 from fastapi import Header, HTTPException, Request, Depends
@@ -9,8 +11,59 @@ from app.config.settings import settings
 from app.database.session import get_session
 from app.services.auth import decode_token, get_user_by_id
 from app.services.demo_tokens import verify_demo_token
+from app.services.redis import RedisSlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
+
+# Per-IP in-memory fallback used when Redis is unavailable (per-process only).
+_webhook_inmem: dict[str, deque[float]] = defaultdict(deque)
+
+
+def reset_webhook_rate_limits() -> None:
+    """Clear in-memory rate-limit state (test helper)."""
+    _webhook_inmem.clear()
+
+
+def _inmem_webhook_allowed(ip: str, limit: int, window: float = 60.0) -> bool:
+    now = time.monotonic()
+    dq = _webhook_inmem[ip]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
+async def rate_limit_webhook(request: Request) -> None:
+    """Basic per-IP rate limiting for public webhook endpoints.
+
+    Uses the shared Redis sliding-window limiter keyed by client IP. Falls
+    back to a per-process in-memory sliding window when Redis is down so the
+    webhook is never completely unguarded. Returns 429 with Retry-After when
+    the limit (webhook_rpm_limit) is exceeded.
+    """
+    rpm = settings.webhook_rpm_limit
+    if rpm <= 0:
+        return
+    ip = request.client.host if request.client else "unknown"
+
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=f"ratelimit:webhook:{ip}")
+    wait = await limiter.acquire(rpm, window=60)
+    if wait == -1:
+        if not _inmem_webhook_allowed(ip, rpm):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": "60"},
+            )
+        return
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
 
 
 async def _extract_session_id(request: Request) -> str | None:

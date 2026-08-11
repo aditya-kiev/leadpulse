@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 
@@ -14,6 +15,17 @@ def safe_text(content):
                 parts.append(str(item))
         return "\n".join(parts)
     return str(content)
+
+
+def log_fingerprint(content) -> str:
+    """Return a length + SHA-256 prefix fingerprint instead of raw lead content.
+
+    Never log user/assistant message text in plaintext (lead PII).  This
+    helper keeps traceability (length + stable hash) without leaking content.
+    """
+    text = safe_text(content)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    return f"len={len(text)} sha256={digest}"
 
 
 _PERIODIC_RE = re.compile(r"\s*(/mo|/month|/yr|/year|per\s*month|per\s*year)\s*$", re.I)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.agent.graph import run_agent
 from app.agent.gemini import GeminiRateLimitError
-from app.api.deps import verify_api_key, authenticate_request
+from app.api.deps import verify_api_key, authenticate_request, rate_limit_webhook
 from app.models.schemas import (
     MessageIn,
     MessageOut,
@@ -28,6 +28,7 @@ async def start_conversation(
     request: Request,
     payload: StartConversationIn,
     _auth: tuple = Depends(authenticate_request),
+    _rate: None = Depends(rate_limit_webhook),
 ) -> StartConversationOut:
     session_id = payload.session_id or str(uuid.uuid4())
     tenant_id = _resolve_tenant_id(request)
@@ -78,6 +79,7 @@ async def handle_message(
     request: Request,
     payload: MessageIn,
     _auth: tuple = Depends(authenticate_request),
+    _rate: None = Depends(rate_limit_webhook),
 ) -> MessageOut:
     tenant_id = _resolve_tenant_id(request)
     logger.debug("handle_message session=%s tenant_id=%s", payload.session_id, tenant_id)

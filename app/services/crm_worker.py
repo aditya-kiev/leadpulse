@@ -98,10 +98,8 @@ async def run_worker():
 
 def main():
     import time as _time
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from app.services.logging_config import configure_logging
+    configure_logging()
     logger.info("Starting CRM push worker process")
     try:
         asyncio.run(run_worker())

@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Case Studies — Leadpulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #F7F3EE;
+    --panel: #FFFFFF;
+    --ink: #2C221A;
+    --ink-soft: #5C4F44;
+    --muted: #8C7F74;
+    --hairline: #E6DDD4;
+    --accent: #9B6B43;
+    --accent-hover: #7F5836;
+    --accent-soft: #F0E6DC;
+    --warm: #6D8F6E;
+    --warm-soft: #E4EEE4;
+    --brass: #B8903E;
+    --brass-soft: #F3EAD6;
+    --radius: 10px;
+    --font-display: 'DM Serif Display', Georgia, serif;
+    --font-body: 'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    font-family: var(--font-body);
+    color: var(--ink);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--hairline);
+    background: rgba(247, 243, 238, 0.85);
+    backdrop-filter: blur(8px);
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .brand {
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 400;
+    color: var(--ink);
+    letter-spacing: -0.01em;
+  }
+  .brand .accent { color: var(--accent); }
+
+  .session-tag {
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+  }
+
+  /* ── Intro strip ── */
+  .explainer {
+    background: var(--accent-soft);
+    padding: 14px 32px;
+    font-size: 14px;
+    color: var(--ink-soft);
+    line-height: 1.5;
+    border-bottom: 1px solid var(--hairline);
+    text-align: center;
+  }
+  .explainer strong { color: var(--ink); font-weight: 600; }
+
+  /* ── Layout ── */
+  .layout {
+    max-width: 880px;
+    margin: 32px auto 48px;
+    padding: 0 32px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  @media (max-width: 880px) {
+    .topbar { padding: 14px 18px; }
+    .explainer { padding: 12px 18px; font-size: 13px; }
+    .layout { padding: 0 14px; margin-top: 18px; }
+  }
+
+  /* ── Case study card ── */
+  .case {
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(44,34,26,0.04);
+  }
+
+  .case-head {
+    padding: 20px 28px 16px;
+    border-bottom: 1px solid var(--hairline);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .case-eyebrow {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 3px;
+  }
+  .case-title {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--ink);
+  }
+
+  .vertical-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .case-body {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+
+  @media (max-width: 700px) {
+    .case-body { grid-template-columns: 1fr; }
+  }
+
+  .story-col {
+    padding: 18px 28px;
+  }
+  .story-col + .story-col { border-left: 1px solid var(--hairline); }
+
+  @media (max-width: 700px) {
+    .story-col + .story-col { border-left: none; border-top: 1px solid var(--hairline); }
+  }
+
+  .story-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .story-label.before .tag {
+    background: #F0EBE4;
+    color: var(--muted);
+  }
+  .story-label.after .tag {
+    background: var(--warm-soft);
+    color: #3D6B3E;
+  }
+  .story-label .tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    letter-spacing: 0.03em;
+  }
+
+  .story-col p {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--ink-soft);
+  }
+
+  /* ── Metrics ── */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--hairline);
+    border-top: 1px solid var(--hairline);
+  }
+
+  @media (max-width: 520px) {
+    .metrics { grid-template-columns: 1fr; }
+  }
+
+  .metric {
+    background: var(--panel);
+    padding: 18px 28px;
+    text-align: center;
+  }
+  .metric-value {
+    font-family: var(--font-display);
+    font-size: 30px;
+    font-weight: 400;
+    color: var(--accent);
+    line-height: 1.1;
+  }
+  .metric-label {
+    font-size: 11.5px;
+    color: var(--muted);
+    font-weight: 500;
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  /* ── Testimonial ── */
+  .testimonial {
+    padding: 22px 28px;
+    background: #F9F7F4;
+    border-top: 1px solid var(--hairline);
+  }
+  .testimonial .mark {
+    font-family: var(--font-display);
+    font-size: 30px;
+    line-height: 1;
+    color: var(--brass);
+    margin-bottom: 6px;
+  }
+  .testimonial .quote {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-style: italic;
+    line-height: 1.5;
+    color: var(--ink);
+  }
+  .testimonial .attribution {
+    margin-top: 10px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+  .testimonial .role {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    text-align: center;
+    padding: 0 32px 36px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  /* ── Placeholder emphasis ── */
+  .ph {
+    color: var(--accent);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">Leadpulse<span class="accent">.</span></div>
+  <div class="session-tag">Case Studies</div>
+</div>
+
+<div class="explainer">
+  <strong>Faster responses. Higher conversion.</strong> Here's what changes when every inbound lead gets an instant, pre-qualified reply — before they go cold.
+</div>
+
+<div class="layout">
+
+  <!-- ── Case study 1 ── -->
+  <div class="case">
+    <div class="case-head">
+      <div>
+        <div class="case-eyebrow">Case Study · 1</div>
+        <div class="case-title"><span class="ph">[CLIENT NAME 1]</span></div>
+      </div>
+      <span class="vertical-badge">[INDUSTRY / VERTICAL]</span>
+    </div>
+
+    <div class="case-body">
+      <div class="story-col">
+        <div class="story-label before"><span class="tag">Before</span> The problem</div>
+        <p>[Describe the problem before Leadpulse — e.g. leads sat for hours, manual data entry, no follow-up, missed after-hours inquiries.]</p>
+      </div>
+      <div class="story-col">
+        <div class="story-label after"><span class="tag">After</span> What changed</div>
+        <p>[Describe what changed — e.g. every lead is greeted instantly, qualified automatically, and routed to a booking — no forms, no manual entry.]</p>
+      </div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. response time]</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. qualified leads / month]</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. conversion rate]</div>
+      </div>
+    </div>
+
+    <div class="testimonial">
+      <div class="mark">“</div>
+      <div class="quote">[Insert client testimonial quote here.]</div>
+      <div class="attribution">— [CLIENT NAME 1], [ROLE / TITLE]</div>
+      <div class="role">[COMPANY NAME]</div>
+    </div>
+  </div>
+
+  <!-- ── Case study 2 ── -->
+  <div class="case">
+    <div class="case-head">
+      <div>
+        <div class="case-eyebrow">Case Study · 2</div>
+        <div class="case-title"><span class="ph">[CLIENT NAME 2]</span></div>
+      </div>
+      <span class="vertical-badge">[INDUSTRY / VERTICAL]</span>
+    </div>
+
+    <div class="case-body">
+      <div class="story-col">
+        <div class="story-label before"><span class="tag">Before</span> The problem</div>
+        <p>[Describe the problem before Leadpulse — e.g. leads sat for hours, manual data entry, no follow-up, missed after-hours inquiries.]</p>
+      </div>
+      <div class="story-col">
+        <div class="story-label after"><span class="tag">After</span> What changed</div>
+        <p>[Describe what changed — e.g. every lead is greeted instantly, qualified automatically, and routed to a booking — no forms, no manual entry.]</p>
+      </div>
+    </div>
+
+    <div class="metrics">
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. response time]</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. qualified leads / month]</div>
+      </div>
+      <div class="metric">
+        <div class="metric-value">[METRIC]</div>
+        <div class="metric-label">[e.g. conversion rate]</div>
+      </div>
+    </div>
+
+    <div class="testimonial">
+      <div class="mark">“</div>
+      <div class="quote">[Insert client testimonial quote here.]</div>
+      <div class="attribution">— [CLIENT NAME 2], [ROLE / TITLE]</div>
+      <div class="role">[COMPANY NAME]</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  Leadpulse — instant lead response, qualification, and booking in one conversation.
+</div>
+
+</body>
+</html>

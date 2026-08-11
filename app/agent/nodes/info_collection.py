@@ -7,7 +7,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
-from app.agent.nodes.helpers import parse_budget, safe_text
+from app.agent.nodes.helpers import log_fingerprint, parse_budget, safe_text
 from app.config.settings import settings as _settings
 
 logger = logging.getLogger("graph.node.info_collection")
@@ -102,7 +102,7 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
 
         logger.info(
             "NODE info_collection ENTERED: session=%s lead_type=%s user_msg=%s",
-            state.get("session_id"), lead_type, user_message[:60],
+            state.get("session_id"), lead_type, log_fingerprint(user_message),
         )
 
         conv_text = "\n".join(
@@ -159,7 +159,7 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
             HumanMessage(content=user_message),
         ])
         text = safe_text(response.content)
-        logger.info("NODE info_collection: response=%s", text[:120])
+        logger.info("NODE info_collection: response=%s", log_fingerprint(text))
 
         updates, reply = _parse_combined_response(text)
 
@@ -176,8 +176,8 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
         new_missing = _compute_missing(new_merged, lead_type)
 
         logger.info(
-            "NODE info_collection EXIT: updates=%s missing=%s reply=%s",
-            updates_dict, new_missing, reply[:60],
+            "NODE info_collection EXIT: updates_keys=%s missing=%s reply=%s",
+            sorted(updates_dict), new_missing, log_fingerprint(reply),
         )
 
         return {

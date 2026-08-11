@@ -6,7 +6,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
 from app.agent.tools.calendar import get_available_slots
-from app.agent.nodes.helpers import safe_text
+from app.agent.nodes.helpers import log_fingerprint, safe_text
 from app.config.settings import settings
 
 logger = logging.getLogger("graph.node.meeting_booking")
@@ -17,7 +17,7 @@ def create_meeting_booking_node(model: ChatGoogleGenerativeAI):
         user_msgs = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
-        logger.info("NODE meeting_booking ENTERED: user_message=%s", user_message[:50])
+        logger.info("NODE meeting_booking ENTERED: user_message=%s", log_fingerprint(user_message))
 
         slots = await get_available_slots(settings.calendar_availability_days)
         slot_labels = "\n".join(s["label"] for s in slots[:9])
@@ -34,7 +34,7 @@ def create_meeting_booking_node(model: ChatGoogleGenerativeAI):
             HumanMessage(content=user_message),
         ])
         response_text = safe_text(response.content)
-        logger.info("NODE meeting_booking EXIT: response=%s", response_text[:80])
+        logger.info("NODE meeting_booking EXIT: response=%s", log_fingerprint(response_text))
 
         confirmed = False
         meeting_time = None
