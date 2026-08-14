@@ -2,8 +2,187 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from fastapi import Request
 
 from app.main import app
+
+
+# ── REAL Postgres regression tests ────────────────────────────────────────
+#
+# compute_org_metrics used to compare TIMESTAMP columns against raw date
+# strings; asyncpg raised UndefinedFunctionError ("operator does not exist:
+# timestamp without time zone >= character varying") and /analytics/metrics
+# 500'd.  These tests run against the real Alembic-managed test DB so a
+# date-range query is actually executed.
+
+import os
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from app.database.models import LeadConversation, Organization, UsageLog
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test",
+)
+
+
+@pytest.fixture
+async def pg_session_factory():
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_compute_org_metrics_real_postgres_accepts_date_strings(pg_session_factory):
+    """Date-range queries against real TIMESTAMP columns must not crash.
+
+    Regression: string comparisons raised UndefinedFunctionError; the
+    endpoint 500'd for every organization with any conversation.
+    """
+    from app.services import analytics
+
+    org_slug = f"analytics-it-{uuid4().hex[:8]}"
+    tid = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Analytics IT", slug=org_slug)
+            session.add(org)
+            await session.flush()
+            tid = org.id
+
+            now = datetime.utcnow()
+            session.add_all([
+                LeadConversation(
+                    session_id=f"it-metrics-{uuid4().hex[:8]}-a",
+                    tenant_id=tid,
+                    lead_status="hot",
+                    booking_confirmed=True,
+                    human_escalated=False,
+                    qualification_score=0.9,
+                    conversation_stage="qualified",
+                    created_at=now - timedelta(days=3),
+                ),
+                LeadConversation(
+                    session_id=f"it-metrics-{uuid4().hex[:8]}-b",
+                    tenant_id=tid,
+                    lead_status="warm",
+                    booking_confirmed=False,
+                    human_escalated=True,
+                    qualification_score=0.7,
+                    conversation_stage="collecting",
+                    created_at=now - timedelta(days=2),
+                ),
+                LeadConversation(
+                    session_id=f"it-metrics-{uuid4().hex[:8]}-c",
+                    tenant_id=tid,
+                    lead_status="cold",
+                    booking_confirmed=False,
+                    human_escalated=False,
+                    qualification_score=0.2,
+                    conversation_stage="greeting",
+                    created_at=now - timedelta(days=40),
+                ),
+            ])
+            await session.commit()
+
+        with patch("app.services.analytics.async_session_factory", pg_session_factory):
+            in_range = await analytics.compute_org_metrics(
+                tid,
+                start_date=(now - timedelta(days=7)).strftime("%Y-%m-%d"),
+                end_date=now.strftime("%Y-%m-%d"),
+            )
+            assert in_range["lead_volume"]["total"] == 2
+            assert in_range["lead_volume"]["hot"] == 1
+            assert in_range["lead_volume"]["warm"] == 1
+            assert in_range["meetings_booked"] == 1
+            assert in_range["human_escalations"] == 1
+
+            out_of_range = await analytics.compute_org_metrics(
+                tid,
+                start_date=(now - timedelta(days=60)).strftime("%Y-%m-%d"),
+                end_date=(now - timedelta(days=50)).strftime("%Y-%m-%d"),
+            )
+            assert out_of_range["lead_volume"]["total"] == 0
+    finally:
+        async with pg_session_factory() as session:
+            if tid:
+                from sqlalchemy import delete
+                await session.execute(
+                    delete(LeadConversation).where(LeadConversation.tenant_id == tid)
+                )
+                await session.execute(
+                    delete(UsageLog).where(UsageLog.organization_id == tid)
+                )
+                await session.execute(delete(Organization).where(Organization.id == tid))
+                await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_analytics_metrics_endpoint_real_db_returns_200(pg_session_factory):
+    """End-to-end: GET /analytics/metrics over real Postgres must return 200
+    (it previously raised UndefinedFunctionError → 500)."""
+    from app.api import analytics as analytics_api
+    from app.api.deps import get_current_user as real_get_current_user
+    from app.services import analytics as analytics_service
+
+    org_slug = f"analytics-e2e-{uuid4().hex[:8]}"
+    tid = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Analytics E2E", slug=org_slug)
+            session.add(org)
+            await session.flush()
+            tid = org.id
+            session.add(LeadConversation(
+                session_id=f"it-e2e-{uuid4().hex[:8]}",
+                tenant_id=tid,
+                lead_status="hot",
+                booking_confirmed=True,
+                human_escalated=False,
+                conversation_stage="qualified",
+                created_at=datetime.utcnow() - timedelta(days=1),
+            ))
+            await session.commit()
+
+        async def mock_auth(request: Request):
+            request.state.tenant_id = tid
+            return (None, "org_admin", tid)
+
+        app.dependency_overrides[real_get_current_user] = mock_auth
+        try:
+            with patch.object(analytics_service, "async_session_factory", pg_session_factory):
+                transport = ASGITransport(app=app)
+                async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                    response = await ac.get(
+                        "/analytics/metrics",
+                        params={
+                            "start_date": (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                            "end_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(real_get_current_user, None)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["lead_volume"]["total"] == 1
+        assert data["lead_volume"]["hot"] == 1
+        assert data["meetings_booked"] == 1
+    finally:
+        async with pg_session_factory() as session:
+            if tid:
+                from sqlalchemy import delete
+                await session.execute(
+                    delete(LeadConversation).where(LeadConversation.tenant_id == tid)
+                )
+                await session.execute(delete(Organization).where(Organization.id == tid))
+                await session.commit()
 
 
 @pytest.fixture
@@ -163,6 +342,133 @@ async def test_run_daily_rollup():
 
                 count = await run_daily_rollup()
                 assert count == 1
+
+
+# ── REAL Postgres: run_daily_rollup actually writes the row ──────────────
+# run_daily_rollup() was defined but never scheduled, so daily_org_summaries
+# stayed empty.  The scheduler in main.py lifespan now calls it; these tests
+# prove the function itself works against real Postgres.
+
+from app.database.models import DailyOrgSummary
+
+
+@pytest.mark.asyncio
+async def test_run_daily_rollup_real_postgres_writes_summary(pg_session_factory):
+    """REAL Postgres: seeding conversations for yesterday and calling
+    run_daily_rollup() must insert a daily_org_summaries row with the right
+    counts (this never happened before — the function was never called)."""
+    from datetime import date as date_cls
+    from sqlalchemy import delete, select
+
+    from app.database.models import Organization
+    from app.services.analytics import run_daily_rollup
+
+    org_slug = f"rollup-it-{uuid4().hex[:8]}"
+    tid = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Rollup IT", slug=org_slug)
+            session.add(org)
+            await session.flush()
+            tid = org.id
+            yesterday = (datetime.utcnow() - timedelta(days=1)).replace(
+                hour=12, minute=0, second=0, microsecond=0
+            )
+            session.add_all([
+                LeadConversation(
+                    session_id=f"it-rollup-{uuid4().hex[:8]}-1",
+                    tenant_id=tid,
+                    lead_status="hot",
+                    booking_confirmed=True,
+                    human_escalated=False,
+                    qualification_score=0.9,
+                    conversation_stage="qualified",
+                    created_at=yesterday,
+                ),
+                LeadConversation(
+                    session_id=f"it-rollup-{uuid4().hex[:8]}-2",
+                    tenant_id=tid,
+                    lead_status="warm",
+                    booking_confirmed=False,
+                    human_escalated=True,
+                    qualification_score=0.6,
+                    conversation_stage="collecting",
+                    created_at=yesterday,
+                ),
+            ])
+            await session.commit()
+
+        with patch("app.services.analytics.async_session_factory", pg_session_factory):
+            count = await run_daily_rollup()
+        assert count >= 1
+
+        expected_date = (datetime.utcnow() - timedelta(days=1)).strftime("%Y-%m-%d")
+        async with pg_session_factory() as session:
+            row = (await session.execute(
+                select(DailyOrgSummary).where(
+                    DailyOrgSummary.organization_id == tid,
+                    DailyOrgSummary.date == expected_date,
+                )
+            )).scalar_one_or_none()
+            assert row is not None, (
+                "daily_org_summaries row must be written by run_daily_rollup"
+            )
+            assert row.total_conversations == 2
+            assert row.qualified_leads == 2  # hot + warm
+            assert row.hot_leads == 1
+            assert row.warm_leads == 1
+            assert row.meetings_booked == 1
+            assert row.human_escalations == 1
+            assert row.avg_qualification_score == 0.75
+    finally:
+        async with pg_session_factory() as session:
+            if tid:
+                from sqlalchemy import delete
+                await session.execute(
+                    delete(DailyOrgSummary).where(DailyOrgSummary.organization_id == tid)
+                )
+                await session.execute(
+                    delete(LeadConversation).where(LeadConversation.tenant_id == tid)
+                )
+                await session.execute(delete(Organization).where(Organization.id == tid))
+                await session.commit()
+
+
+def test_seconds_until_next_utc_midnight_is_bounded():
+    from datetime import datetime, timezone as tz
+
+    from app.services.rollup_scheduler import seconds_until_next_utc_midnight
+
+    now = datetime(2026, 8, 14, 15, 30, 0, tzinfo=tz.utc)
+    secs = seconds_until_next_utc_midnight(now)
+    assert 0 < secs < 24 * 3600
+    # At exactly midnight, the next run is ~24h away.
+    midnight = datetime(2026, 8, 14, 0, 0, 0, tzinfo=tz.utc)
+    assert seconds_until_next_utc_midnight(midnight) == 24 * 3600
+
+
+@pytest.mark.asyncio
+async def test_daily_rollup_scheduler_starts_background_task():
+    """The scheduler must register a background asyncio task that invokes
+    run_daily_rollup (previously nothing called it)."""
+    import asyncio
+
+    from app.services import rollup_scheduler
+
+    invoked = asyncio.Event()
+
+    async def fake_run_daily_rollup():
+        invoked.set()
+        return 0
+
+    with patch("app.services.analytics.run_daily_rollup", new=fake_run_daily_rollup):
+        await rollup_scheduler.stop_daily_rollup_scheduler()  # clean slate
+        task = rollup_scheduler.start_daily_rollup_scheduler()
+        try:
+            assert task is not None and not task.done()
+            await asyncio.wait_for(invoked.wait(), timeout=5)
+        finally:
+            await rollup_scheduler.stop_daily_rollup_scheduler()
 
 
 @pytest.mark.asyncio
