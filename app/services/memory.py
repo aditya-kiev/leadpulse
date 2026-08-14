@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from app.database.crud import get_conversation, update_conversation, create_conversation
@@ -6,6 +7,45 @@ from app.database.session import async_session_factory
 from app.services.redis import cache_session_state, get_cached_session_state, invalidate_session_cache
 
 logger = logging.getLogger(__name__)
+
+
+def _coerce_meeting_time(value) -> datetime | None:
+    """Coerce ``meeting_time`` from agent state into a real datetime.
+
+    Agent state always carries ``meeting_time`` as an ISO-8601 string (the
+    meeting_booking node sets it from ``slot["datetime"]``, e.g.
+    ``"2026-08-15T09:00:00+00:00"``). Postgres stores it in a ``timestamp
+    without time zone`` column, and asyncpg rejects both a plain string and
+    a timezone-aware datetime for such a parameter (it must subtract the
+    naive epoch from the value), so the whole state save would raise.
+    Convert here, normalising to an offset-naive UTC datetime, passing
+    ``None`` through unchanged, and storing ``None`` (with a log line)
+    rather than raising on malformed input so a bad meeting_time can never
+    fail the entire state save.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            logger.warning(
+                "save_state: malformed meeting_time %r — storing None",
+                value,
+            )
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    logger.warning(
+        "save_state: unsupported meeting_time type %s — storing None",
+        type(value).__name__,
+    )
+    return None
 
 
 class ConversationMemory:
@@ -32,7 +72,7 @@ class ConversationMemory:
                     lead_intent=state.get("lead_intent"),
                     lead_type=state.get("lead_type"),
                     booking_confirmed=state.get("booking_confirmed", False),
-                    meeting_time=state.get("meeting_time"),
+                    meeting_time=_coerce_meeting_time(state.get("meeting_time")),
                     conversation_history=state.get("conversation_history"),
                     conversation_stage=state.get("conversation_stage"),
                     current_node=state.get("current_node"),
