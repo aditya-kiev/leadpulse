@@ -108,9 +108,17 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning("Sentry initialization failed: %s", e)
 
+    # Start the daily analytics rollup scheduler (once at startup, then
+    # every day at 00:00 UTC). Never blocks startup — runs as a background task.
+    if settings.database_url:
+        from app.services.rollup_scheduler import start_daily_rollup_scheduler
+        start_daily_rollup_scheduler()
+
     yield
 
     logger.info("Shutting down Lead Qualification Agent...")
+    from app.services.rollup_scheduler import stop_daily_rollup_scheduler
+    await stop_daily_rollup_scheduler()
     if _redis_client:
         try:
             from app.services.redis import close_redis
