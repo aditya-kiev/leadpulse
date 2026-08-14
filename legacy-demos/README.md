@@ -1,7 +1,8 @@
 # Legacy demo files
 
-These files are superseded by `demo-realestate-pro.html` and
-`demo-insurance-pro.html` at the project root. They were dev-stage test
+These files are superseded by `static/demo-realestate-pro.html` and
+`static/demo-insurance-pro.html`, which are served at `/demo-realestate`
+and `/demo-insurance` by the app. They were dev-stage test
 pages — functionally correct but visually basic, India-denominated (₹,
 lakhs, Noida), and used a shared "Meridian.ai" branding placeholder.
 

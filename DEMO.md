@@ -4,8 +4,8 @@
 
 | Client type | File | VERTICAL |
 |---|---|---|
-| Real estate brokerage | `demo-realestate-pro.html` | `real_estate` |
-| Insurance agency | `demo-insurance-pro.html` | `insurance` |
+| Real estate brokerage | `static/demo-realestate-pro.html` → `/demo-realestate` | `real_estate` |
+| Insurance agency | `static/demo-insurance-pro.html` → `/demo-insurance` | `insurance` |
 
 ## Before you start
 
@@ -24,9 +24,15 @@ GEMINI_API_KEY=your-key
 uvicorn app.main:app --reload
 ```
 
-Then open `demo-realestate-pro.html` or `demo-insurance-pro.html` directly
-in a browser (double-click the file — no web server needed; CORS is
-configured to allow `file://` origins).
+Then open the demo in a browser at the served URLs (uvicorn serves the
+pages directly — no double-clicking needed):
+
+- `http://localhost:8000/demo-realestate`
+- `http://localhost:8000/demo-insurance`
+- `http://localhost:8000/case-studies.html`
+
+The pages live in `static/` and are wired up via `app/main.py` (see the
+`/demo-realestate`, `/demo-insurance`, and `/case-studies.html` routes).
 
 ## What to expect
 

@@ -1,9 +1,12 @@
 import logging
+from pathlib import Path
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.webhook import router as webhook_router
 from app.api.conversation import router as conversation_router
@@ -150,6 +153,27 @@ if settings.debug and settings.environment != "production":
     app.include_router(debug_router)
 app.include_router(analytics_router)
 app.include_router(branding_router)
+
+
+# ── Static marketing pages (hosted from repo root `static/`) ──
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/case-studies.html", include_in_schema=False)
+async def case_studies_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "case-studies.html", media_type="text/html")
+
+
+@app.get("/demo-realestate", include_in_schema=False)
+async def demo_realestate_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "demo-realestate-pro.html", media_type="text/html")
+
+
+@app.get("/demo-insurance", include_in_schema=False)
+async def demo_insurance_page() -> FileResponse:
+    return FileResponse(STATIC_DIR / "demo-insurance-pro.html", media_type="text/html")
 
 
 @app.get("/health", response_model=HealthOut)
