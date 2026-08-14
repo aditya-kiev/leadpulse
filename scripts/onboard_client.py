@@ -339,6 +339,7 @@ async def onboard_client(args: argparse.Namespace) -> OnboardResult:
         if args.admin_email:
             from app.services.auth import create_user
 
+            admin_email = args.admin_email
             admin_password = uuid.uuid4().hex[:16]
             await create_user(
                 session,
