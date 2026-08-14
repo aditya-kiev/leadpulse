@@ -15,6 +15,7 @@ Usage:
         --vertical real_estate \
         --gemini-key AIzaSy... \
         [--admin-email owner@bellavista.com] \
+        [--notification-phone +15550123] \
         [--slug bellavista] \
         [--brand-name "Bella Vista Realty"] \
         [--primary-color "#9B6B43"] \
@@ -24,6 +25,10 @@ Usage:
         [--api-base https://lead-agent-api.example.com] \
         [--app-hostname app.leadpulse.ai]
 
+Can be run either way (no PYTHONPATH needed):
+    python scripts/onboard_client.py ...
+    python -m scripts.onboard_client ...
+
 Requires DATABASE_URL (or .env) and, in production, CRM_ENCRYPTION_KEY.
 """
 from __future__ import annotations
@@ -31,10 +36,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import re
+import secrets
 import sys
 import uuid
 from dataclasses import dataclass, field
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select
 
@@ -76,10 +85,17 @@ def _widget_snippet(
     brand_name: str,
     primary_color: str,
     title: str,
+    widget_key: str = "",
 ) -> str:
-    """Return a self-contained embeddable chat widget (single <script>)."""
+    """Return a self-contained embeddable chat widget (single <script>).
+
+    The widget authenticates with a per-session demo token (short-lived,
+    per-message) alongside the organization's long-lived tenant-bound
+    ``X-Widget-Key`` header, which scopes every request to the right tenant.
+    """
     css_color = primary_color or "#4F46E5"
     brand = brand_name or "Chat with us"
+    widget_key_js = repr(widget_key) if widget_key else "''"
     return f"""<!-- LeadPulse chat widget — tenant: {tenant_slug} -->
 <script>
 (function () {{
@@ -87,7 +103,8 @@ def _widget_snippet(
   var BRAND = {brand!r};
   var COLOR = {css_color!r};
   var TITLE = {title!r};
-  var sessionId = null, token = null, open = false, sending = false;
+  var WIDGET_KEY = {widget_key_js};
+  var sessionId = null, token = null, authHeaders = null, open = false, sending = false;
 
   function css() {{
     return 'position:fixed;right:20px;bottom:20px;z-index:999999;font-family:Inter,system-ui,sans-serif;' +
@@ -137,10 +154,13 @@ def _widget_snippet(
     var r = await fetch(API + '/demo/token', {{ method: 'POST' }});
     var d = await r.json();
     sessionId = d.session_id; token = d.token;
+    authHeaders = {{ 'Content-Type': 'application/json', 'X-Demo-Token': token }};""" + (
+        "\n    if (WIDGET_KEY) authHeaders['X-Widget-Key'] = WIDGET_KEY;" if widget_key else ""
+    ) + f"""
     try {{
       var s = await fetch(API + '/webhook/start', {{
         method: 'POST',
-        headers: {{ 'Content-Type': 'application/json', 'X-Demo-Token': token }},
+        headers: authHeaders,
         body: JSON.stringify({{ session_id: sessionId, channel: 'web' }}),
       }});
       var sd = await s.json();
@@ -157,7 +177,7 @@ def _widget_snippet(
     try {{
       var r = await fetch(API + '/webhook/message', {{
         method: 'POST',
-        headers: {{ 'Content-Type': 'application/json', 'X-Demo-Token': token }},
+        headers: authHeaders,
         body: JSON.stringify({{ session_id: sessionId, message: text, channel: 'web' }}),
       }});
       var d = await r.json();
@@ -206,6 +226,7 @@ def _setup_checklist(
         f"[x] Tenant slug                {slug}  (id={org['id']})",
         f"[x] Plan tier                  {org['plan_tier']}",
         f"[x] Vertical                   {vertical}",
+        f"[x] Widget key generated       tenant-bound, embedded in snippet (X-Widget-Key)",
         f"[x] Gemini key stored          encrypted in crm_configs (tenant-scoped)",
     ]
     if admin_email:
@@ -213,6 +234,8 @@ def _setup_checklist(
         lines.append(f"    -> temporary password:     {admin_password}")
     else:
         lines.append("[ ] Dashboard admin user       create one via /auth/register or re-run with --admin-email")
+    if org.get("notification_phone"):
+        lines.append(f"[x] Hot-lead SMS target         {org['notification_phone']} (requires SMS_ENABLED=true)")
 
     lines += [
         "",
@@ -220,10 +243,13 @@ def _setup_checklist(
         "   Paste the generated <script> snippet into the client's website just before </body>.",
         "   Widget file: " + ("saved to disk (--widget-out)" if org.get("widget_path") else "printed above"),
         f"   Widget API base: {api_base}",
+        "   The widget sends X-Widget-Key on every call, so every conversation is stored",
+        "   under THIS tenant automatically — no Host/CNAME setup required.",
         "   Embed on the client's site and hard-refresh to confirm the bubble appears.",
         "",
-        "2. TENANT RESOLUTION",
-        "   The webhook maps Host -> tenant. Pick one:",
+        "2. TENANT RESOLUTION (optional, for dashboard/branding)",
+        "   The widget key already scopes the webhook data to this tenant. For the",
+        "   analytics dashboard / custom domains you may still want one of:",
     ]
     if subdomain:
         lines += [
@@ -242,7 +268,12 @@ def _setup_checklist(
         "   Add a crm_configs row for fub / kvcore / ams360 with encrypted credentials so",
         "   qualified leads are pushed automatically.",
         "",
-        "5. SMOKE TEST",
+        "5. HOT-LEAD NOTIFICATIONS (optional)",
+        "   Set RESEND_API_KEY (+ RESEND_FROM_EMAIL) and SMS_ENABLED=true with Twilio",
+        "   creds to get an email/SMS the moment a lead turns hot or books a meeting.",
+        "   Email goes to the org_admin created above; SMS to the org notification_phone.",
+        "",
+        "6. SMOKE TEST",
         f"   Open the widget and send: \"Hi, I'm interested in your services.\"",
         f"   Expect an instant reply. Check /conversation/<session_id> for extracted fields.",
         "",
@@ -277,6 +308,10 @@ async def onboard_client(args: argparse.Namespace) -> OnboardResult:
             slug=slug,
             plan_tier=args.plan_tier,
         )
+        widget_key = secrets.token_urlsafe(32)
+        org.widget_key = widget_key
+        if args.notification_phone:
+            org.notification_phone = args.notification_phone
         org.brand_name = args.brand_name or args.agency
         if args.primary_color:
             org.primary_color = args.primary_color
@@ -324,6 +359,7 @@ async def onboard_client(args: argparse.Namespace) -> OnboardResult:
         brand_name=args.brand_name or args.agency,
         primary_color=args.primary_color or "",
         title=args.widget_title or DEFAULT_WIDGET_TITLE,
+        widget_key=widget_key,
     )
 
     if args.widget_out:
@@ -336,6 +372,8 @@ async def onboard_client(args: argparse.Namespace) -> OnboardResult:
         "name": args.agency,
         "slug": slug,
         "plan_tier": args.plan_tier,
+        "widget_key": widget_key,
+        "notification_phone": args.notification_phone,
         "widget_path": args.widget_out,
     }
     checklist = _setup_checklist(
@@ -366,6 +404,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--logo-url", help="URL to the client's logo")
     parser.add_argument("--plan-tier", default="starter", help="starter | growth | pro")
     parser.add_argument("--admin-email", help="Create an org_admin dashboard user with this email")
+    parser.add_argument("--notification-phone", help="Phone number for hot-lead SMS alerts (E.164, e.g. +15550123)")
     parser.add_argument("--widget-out", help="Write the widget snippet to this file")
     parser.add_argument("--api-base", help="Public API base URL the widget should call (e.g. https://api.example.com)")
     parser.add_argument("--app-hostname", help="Auto-provisioned subdomain base, e.g. app.leadpulse.ai")

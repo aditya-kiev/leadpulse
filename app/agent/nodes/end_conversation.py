@@ -8,6 +8,7 @@ from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
 from app.agent.nodes.helpers import log_fingerprint, safe_text
 from app.agent.tools.crm import update_crm
+from app.services.notifications import notify_tenant
 
 logger = logging.getLogger("graph.node.end_conversation")
 
@@ -39,6 +40,14 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
         }
         await update_crm(state["session_id"], lead_data, tenant_id=tenant_id)
         logger.info("NODE end_conversation: CRM updated")
+
+        # Hot-lead / meeting-booked notifications are fire-and-forget: an
+        # email/SMS outage must never break the conversation itself.
+        if tenant_id is not None:
+            try:
+                await notify_tenant(tenant_id, state)
+            except Exception as e:
+                logger.warning("notify_tenant failed for session=%s: %s", state.get("session_id"), e)
 
         response = await model.ainvoke([
             SystemMessage(content=get_prompts().END_CONVERSATION_PROMPT.format(

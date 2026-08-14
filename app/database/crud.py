@@ -93,6 +93,19 @@ async def get_organization_by_slug(
     return result.scalar_one_or_none()
 
 
+async def get_organization_by_widget_key(
+    session: AsyncSession,
+    widget_key: str,
+) -> Organization | None:
+    result = await session.execute(
+        select(Organization).where(
+            Organization.widget_key == widget_key,
+            Organization.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_organizations(
     session: AsyncSession,
     limit: int = 100,

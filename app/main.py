@@ -38,16 +38,33 @@ def check_api_key_configured() -> None:
         )
 
 
-def check_allowed_origins_production() -> None:
-    """Raise RuntimeError if ENV=production and ALLOWED_ORIGINS is wildcard."""
-    if settings.environment == "production" and "*" in (settings.allowed_origins or []):
+def check_demo_token_secret_configured() -> None:
+    """Raise RuntimeError if DEMO_TOKEN_SECRET is unset.
+
+    ``/demo/token`` has no feature flag, so an empty secret means demo tokens
+    can never be verified — a silent misconfiguration. Always require it.
+    """
+    if not settings.demo_token_secret:
         raise RuntimeError(
-            "ALLOWED_ORIGINS must not contain '*' when ENV=production. "
-            "List the explicit dashboard origins instead."
+            "DEMO_TOKEN_SECRET must be set. Generate one with: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
+
+
+def check_allowed_origins_production() -> None:
+    """Raise RuntimeError if a wildcard origin is allowed in a context where
+    real multi-tenant data flows: ENV=production or AUTH_ENABLED=true."""
+    if "*" in (settings.allowed_origins or []) and (
+        settings.environment == "production" or settings.auth_enabled
+    ):
+        raise RuntimeError(
+            "ALLOWED_ORIGINS must not contain '*' when ENV=production or "
+            "AUTH_ENABLED=true. List the explicit dashboard origins instead."
         )
 
 
 check_api_key_configured()
+check_demo_token_secret_configured()
 check_allowed_origins_production()
 
 _redis_client = None

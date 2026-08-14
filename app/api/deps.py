@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.gemini import demo_rpm_limit
 from app.config.settings import settings
+from app.database.crud import get_organization_by_widget_key
 from app.database.session import get_session
 from app.services.auth import decode_token, get_user_by_id
 from app.services.demo_tokens import verify_demo_token
@@ -90,11 +91,12 @@ async def authenticate_request(
     request: Request,
     x_api_key: str | None = Header(None),
     x_demo_token: str | None = Header(None),
+    x_widget_key: str | None = Header(None),
     authorization: str | None = Header(None),
     session: AsyncSession = Depends(get_session),
 ) -> tuple[UUID | None, str, UUID | None]:
     """
-    Authenticate the request via JWT, master API key, or demo token.
+    Authenticate the request via JWT, master API key, widget key, or demo token.
     Returns (user_id, role, organization_id).
 
     In single-tenant mode (settings.auth_enabled=False), no auth is required
@@ -102,6 +104,18 @@ async def authenticate_request(
     In multi-tenant mode (settings.auth_enabled=True), at least one auth
     method must succeed or a 401 is raised.
     """
+    # 0 — Widget key (tenant-bound client widgets). Long-lived per-organization
+    # key issued at onboarding. It must scope the request to that org ONLY —
+    # never super_admin — and never fall back to unauthenticated/tenant-less.
+    if x_widget_key:
+        org = await get_organization_by_widget_key(session, x_widget_key)
+        if org is None:
+            raise HTTPException(status_code=401, detail="Invalid or missing widget key")
+        request.state.tenant_id = org.id
+        request.state.user_id = None
+        request.state.role = "agent"
+        return (None, "agent", org.id)
+
     if not settings.auth_enabled:
         # Legacy single-tenant mode — require API key if configured, allow local dev
         if settings.api_key:

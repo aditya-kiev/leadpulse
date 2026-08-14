@@ -384,6 +384,19 @@ class TestTenantIsolation:
              patch("app.config.settings.settings.jwt_secret_key", "test-secret"):
             check_jwt_secret_configured()
 
+    def test_demo_token_secret_guard_raises_when_empty(self):
+        """DEMO_TOKEN_SECRET empty must fail fast (demo endpoints always live)."""
+        from app.main import check_demo_token_secret_configured
+        with patch("app.config.settings.settings.demo_token_secret", ""):
+            with pytest.raises(RuntimeError, match="DEMO_TOKEN_SECRET must be set"):
+                check_demo_token_secret_configured()
+
+    def test_demo_token_secret_guard_ok_when_set(self):
+        """DEMO_TOKEN_SECRET set must not raise."""
+        from app.main import check_demo_token_secret_configured
+        with patch("app.config.settings.settings.demo_token_secret", "some-secret"):
+            check_demo_token_secret_configured()
+
     @pytest.mark.asyncio
     async def test_create_conversation_stores_tenant_id(self):
         """create_conversation should store the tenant_id on the ORM object."""

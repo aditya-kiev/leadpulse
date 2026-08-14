@@ -159,7 +159,78 @@ async def test_local_dev_no_auth_required(client):
         assert response.status_code == 200
 
 
-# ── Token Scope Tests ────────────────────────────────────────────────────
+# ── Widget Key (tenant-bound client widgets) ─────────────────────────────
+
+async def _agent_ok_response():
+    return {
+        "conversation_history": [],
+        "lead_status": "hot",
+        "booking_confirmed": False,
+        "meeting_time": None,
+        "human_escalated": False,
+        "next_action": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_widget_key_scopes_tenant_not_host(client):
+    """A request with X-Widget-Key must be scoped to the widget key's org —
+    regardless of what the Host header resolves to, and never None."""
+    widget_org = uuid.UUID("33333333-3333-3333-3333-333333333333")
+    host_org = ORG_B_ID
+    mock_org = MagicMock()
+    mock_org.id = widget_org
+
+    with patch("app.services.domain.resolve_tenant_from_host", new_callable=AsyncMock, return_value=host_org), \
+         patch("app.api.deps.get_organization_by_widget_key", new_callable=AsyncMock, return_value=mock_org), \
+         patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent, \
+         patch("app.api.webhook.memory_service.save_state", new_callable=AsyncMock) as mock_save:
+        mock_agent.return_value = await _agent_ok_response()
+        response = await client.post(
+            "/webhook/start",
+            json={"session_id": "widget-session", "channel": "web"},
+            headers={"X-Widget-Key": "widget-key-abc123", "Host": "some-other-org.example.com"},
+        )
+        assert response.status_code == 200
+
+        _, kwargs = mock_agent.call_args
+        assert kwargs["tenant_id"] == widget_org
+        assert kwargs["tenant_id"] != host_org
+        assert kwargs["tenant_id"] is not None
+
+        # save_state must also receive the widget key's tenant.
+        _, save_kwargs = mock_save.call_args
+        assert save_kwargs["tenant_id"] == widget_org
+        assert save_kwargs["tenant_id"] != host_org
+
+
+@pytest.mark.asyncio
+async def test_widget_key_invalid_is_rejected(client):
+    """An invalid widget key must NOT fall back to super_admin / no-tenant."""
+    with patch("app.api.deps.get_organization_by_widget_key", new_callable=AsyncMock, return_value=None), \
+         patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:
+        response = await client.post(
+            "/webhook/start",
+            json={"session_id": "bad-session", "channel": "web"},
+            headers={"X-Widget-Key": "not-a-real-key"},
+        )
+        assert response.status_code == 401
+        mock_agent.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_widget_key_missing_no_auth_is_401_multi_tenant(client):
+    """In multi-tenant mode, missing widget key and no other auth → 401,
+    never super_admin fallthrough."""
+    with patch("app.config.settings.settings.auth_enabled", True), \
+         patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:
+        response = await client.post(
+            "/webhook/start",
+            json={"session_id": "no-auth-session", "channel": "web"},
+        )
+        assert response.status_code == 401
+        mock_agent.assert_not_called()
+
 
 def test_refresh_token_rejected_as_access():
     """Refresh tokens must be rejected by the access token verification path."""

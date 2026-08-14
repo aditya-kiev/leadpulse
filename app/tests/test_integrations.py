@@ -43,13 +43,11 @@ def test_encrypt_decrypt_round_trip():
         assert decrypted == data
 
 
-def test_encrypt_decrypt_fallback_no_key():
+def test_encrypt_decrypt_no_key_raises():
     data = {"api_key": "test"}
     with patch("app.config.settings.settings.crm_encryption_key", ""):
-        encrypted = encrypt_json(data)
-        assert isinstance(encrypted, str)
-        decrypted = decrypt_json(encrypted)
-        assert decrypted == data
+        with pytest.raises(RuntimeError, match="CRM_ENCRYPTION_KEY must be configured"):
+            encrypt_json(data)
 
 
 def test_encrypt_malicious_payload_is_inert_with_key():
@@ -65,17 +63,14 @@ def test_encrypt_malicious_payload_is_inert_with_key():
         assert "__import__" in decrypted["api_key"]
 
 
-def test_encrypt_malicious_payload_is_inert_no_key():
+def test_encrypt_no_key_never_base64_encodes():
     malicious = {
         "api_key": "__import__('os').system('id')",
         "nested": "eval('__import__(\"os\").system(\"id\")')",
     }
     with patch("app.config.settings.settings.crm_encryption_key", ""):
-        encrypted = encrypt_json(malicious)
-        decrypted = decrypt_json(encrypted)
-        assert decrypted == malicious
-        assert isinstance(decrypted["api_key"], str)
-        assert "__import__" in decrypted["api_key"]
+        with pytest.raises(RuntimeError):
+            encrypt_json(malicious)
 
 
 def test_encrypt_decrypt_binary_safe_values():
@@ -103,13 +98,27 @@ def test_production_allows_with_key():
         check_production_encryption_key()
 
 
-def test_development_allows_fallback():
+def test_auth_enabled_requires_key():
+    """AUTH_ENABLED=true with no CRM_ENCRYPTION_KEY must fail fast."""
+    with patch("app.config.settings.settings.environment", "development"), \
+         patch("app.config.settings.settings.auth_enabled", True), \
+         patch("app.config.settings.settings.crm_encryption_key", ""):
+        with pytest.raises(RuntimeError, match="CRM_ENCRYPTION_KEY must be set"):
+            check_production_encryption_key()
+
+
+def test_development_no_key_raises_on_encrypt():
+    """Even in dev, encrypt_json must never silently base64-encode."""
     with patch("app.config.settings.settings.environment", "development"), \
          patch("app.config.settings.settings.crm_encryption_key", ""):
-        data = {"api_key": "test"}
-        encrypted = encrypt_json(data)
-        decrypted = decrypt_json(encrypted)
-        assert decrypted == data
+        with pytest.raises(RuntimeError, match="CRM_ENCRYPTION_KEY must be configured"):
+            encrypt_json({"api_key": "test"})
+
+
+def test_decrypt_no_key_raises():
+    with patch("app.config.settings.settings.crm_encryption_key", ""):
+        with pytest.raises(RuntimeError, match="CRM_ENCRYPTION_KEY must be configured"):
+            decrypt_json("not-a-token")
 
 
 # ── Webhook Fallback ──────────────────────────────────────────────────────

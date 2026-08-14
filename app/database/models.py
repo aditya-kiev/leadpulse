@@ -22,6 +22,8 @@ class Organization(Base):
     custom_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
     custom_domain_status: Mapped[str] = mapped_column(String(20), nullable=False, default="unverified")
     domain_verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    widget_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True, index=True)
+    notification_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     tls_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

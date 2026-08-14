@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     twilio_from_number: str = ""
     sms_enabled: bool = False
 
+    resend_api_key: str = ""
+    resend_from_email: str = ""
+
     calendly_api_key: str = ""
     calendly_event_type_uri: str = ""
     calendly_user_uri: str = ""

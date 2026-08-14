@@ -7,6 +7,7 @@ os.environ["GEMINI_API_KEY"] = "test-fake-key"
 os.environ["LANGSMITH_API_KEY"] = "ls-test-fake"
 os.environ["JWT_SECRET_KEY"] = "test-jwt-secret-key-for-testing"
 os.environ["API_KEY"] = "test-master-api-key"
+os.environ["DEMO_TOKEN_SECRET"] = "test-demo-token-secret-32-chars!!"
 
 
 @pytest.fixture(autouse=True)

@@ -33,6 +33,7 @@ class TestWidgetSnippet:
             brand_name="Bella Vista Realty",
             primary_color="#9B6B43",
             title="Chat with us",
+            widget_key="widget-key-abc123",
         )
 
     def test_embeds_tenant_slug(self):
@@ -50,6 +51,18 @@ class TestWidgetSnippet:
         snippet = self._snippet()
         assert "/webhook/message" in snippet
         assert "/webhook/start" in snippet
+
+    def test_embeds_widget_key_header(self):
+        snippet = self._snippet()
+        assert "widget-key-abc123" in snippet
+        assert "X-Widget-Key" in snippet
+
+    def test_widget_key_absent_no_header(self):
+        snippet = _widget_snippet(
+            tenant_slug="x", api_base="", brand_name="", primary_color="",
+            title=DEFAULT_WIDGET_TITLE, widget_key="",
+        )
+        assert "X-Widget-Key" not in snippet
 
     def test_default_title(self):
         snippet = _widget_snippet(
@@ -99,6 +112,44 @@ class TestChecklist:
             vertical="generic",
         )
         assert "--admin-email" in checklist
+
+    def test_includes_widget_key_step(self):
+        checklist = _setup_checklist(
+            org={"name": "X", "slug": "x", "id": "1", "plan_tier": "starter", "widget_path": None},
+            admin_email=None,
+            admin_password=None,
+            api_base="https://api.example.com",
+            app_hostname=None,
+            vertical="generic",
+        )
+        assert "X-Widget-Key" in checklist
+        assert "no Host/CNAME setup required" in checklist
+
+    def test_includes_notification_phone_when_present(self):
+        checklist = _setup_checklist(
+            org={
+                "name": "X", "slug": "x", "id": "1", "plan_tier": "starter",
+                "widget_path": None, "notification_phone": "+15550123",
+            },
+            admin_email=None,
+            admin_password=None,
+            api_base="https://api.example.com",
+            app_hostname=None,
+            vertical="generic",
+        )
+        assert "+15550123" in checklist
+
+    def test_includes_hot_lead_email_section(self):
+        checklist = _setup_checklist(
+            org={"name": "X", "slug": "x", "id": "1", "plan_tier": "starter", "widget_path": None},
+            admin_email="owner@x.com",
+            admin_password="p",
+            api_base="https://api.example.com",
+            app_hostname=None,
+            vertical="generic",
+        )
+        assert "RESEND_API_KEY" in checklist
+        assert "SMS_ENABLED=true" in checklist
 
 
 class TestParseArgs:
