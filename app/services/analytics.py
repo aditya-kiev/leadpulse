@@ -6,16 +6,43 @@ Pre-computed daily rollups live in the daily_org_summaries table.
 """
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select, func
 
-from app.database.crud import get_conversations_by_tenant
 from app.database.models import LeadConversation, UsageLog
 from app.database.session import async_session_factory
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_date_boundary(value: str | None, *, end_of_day: bool = False) -> datetime | None:
+    """Coerce a ``YYYY-MM-DD`` (or ISO datetime) string to a naive datetime.
+
+    The ``created_at`` columns are TIMESTAMP WITHOUT TIME ZONE; asyncpg
+    rejects string comparisons against them (UndefinedFunctionError), so
+    analytics queries must bind real datetime objects.
+    """
+    if not value:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    try:
+        if "T" in value or " " in value:
+            dt = datetime.fromisoformat(value)
+        else:
+            d = date.fromisoformat(value)
+            dt = datetime.combine(d, time.max if end_of_day else time.min)
+    except ValueError:
+        logger.warning("Unparseable analytics date boundary %r — ignored", value)
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    elif end_of_day and (dt.hour, dt.minute, dt.second, dt.microsecond) == (0, 0, 0, 0):
+        dt = dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return dt
 
 
 async def compute_org_metrics(
@@ -25,11 +52,13 @@ async def compute_org_metrics(
 ):
     """Compute the 8 core metrics for an organization over a date range."""
     async with async_session_factory() as session:
+        start_dt = _parse_date_boundary(start_date)
+        end_dt = _parse_date_boundary(end_date, end_of_day=True)
         base = select(LeadConversation).where(LeadConversation.tenant_id == tenant_id)
-        if start_date:
-            base = base.where(LeadConversation.created_at >= start_date)
-        if end_date:
-            base = base.where(LeadConversation.created_at <= end_date + "T23:59:59")
+        if start_dt:
+            base = base.where(LeadConversation.created_at >= start_dt)
+        if end_dt:
+            base = base.where(LeadConversation.created_at <= end_dt)
 
         result = await session.execute(base)
         conversations = list(result.scalars().all())
@@ -70,10 +99,10 @@ async def compute_org_metrics(
             cost_query = select(func.coalesce(func.sum(UsageLog.estimated_cost), 0.0)).where(
                 UsageLog.organization_id == tenant_id,
             )
-            if start_date:
-                cost_query = cost_query.where(UsageLog.created_at >= start_date)
-            if end_date:
-                cost_query = cost_query.where(UsageLog.created_at <= end_date + "T23:59:59")
+            if start_dt:
+                cost_query = cost_query.where(UsageLog.created_at >= start_dt)
+            if end_dt:
+                cost_query = cost_query.where(UsageLog.created_at <= end_dt)
             cost_result = await session.execute(cost_query)
             total_cost = cost_result.scalar() or 0.0
         if len(booked) > 0:
