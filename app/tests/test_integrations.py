@@ -121,6 +121,87 @@ def test_decrypt_no_key_raises():
             decrypt_json("not-a-token")
 
 
+# ── REAL Postgres: stored CRM config must never be reversible plaintext ──
+#
+# Regression guard for the "silent base64 fallback" class of bug: whatever
+# lands in ``crm_configs.config`` must be Fernet-ciphertext, NOT a base64
+# encoding of the JSON credentials (which any bystander could decode).
+
+import os
+from uuid import uuid4
+
+from sqlalchemy import delete
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test",
+)
+
+
+@pytest.fixture
+async def pg_session_factory():
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stored_crm_config_is_not_base64_json(pg_session_factory):
+    """A config encrypted via encrypt_json and persisted must NOT decode as
+    base64 JSON (that would mean it was stored as reversible plaintext)."""
+    from app.database.models import CRMConfig, Organization
+    from sqlalchemy import select
+
+    org_id = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Enc IT", slug=f"enc-it-{uuid4().hex[:8]}")
+            session.add(org)
+            await session.flush()
+            org_id = org.id
+            with patch("app.config.settings.settings.crm_encryption_key",
+                       "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
+                session.add(CRMConfig(
+                    organization_id=org.id,
+                    integration_type="gemini",
+                    config=encrypt_json({"api_key": "sekret", "vertical": "real_estate"}, tenant_id=org.id),
+                    is_active=True,
+                ))
+            await session.commit()
+
+        async with pg_session_factory() as session:
+            row = (await session.execute(
+                select(CRMConfig).where(CRMConfig.organization_id == org_id)
+            )).scalar_one_or_none()
+            assert row is not None
+            stored = row.config
+            assert isinstance(stored, str)
+            with patch("app.config.settings.settings.crm_encryption_key",
+                       "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="):
+                assert decrypt_json(stored, tenant_id=org_id) == {
+                    "api_key": "sekret",
+                    "vertical": "real_estate",
+                }
+            try:
+                import json as _json
+                decoded = _json.loads(base64.b64decode(stored))
+                pytest.fail(
+                    f"stored config decoded as base64 JSON (reversible plaintext!): {decoded}"
+                )
+            except Exception:
+                pass  # expected: not base64-encoded JSON
+    finally:
+        async with pg_session_factory() as session:
+            if org_id:
+                await session.execute(delete(CRMConfig).where(CRMConfig.organization_id == org_id))
+                await session.execute(delete(Organization).where(Organization.id == org_id))
+                await session.commit()
+
+
 # ── Webhook Fallback ──────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
