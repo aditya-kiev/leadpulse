@@ -33,6 +33,38 @@ logger = logging.getLogger(__name__)
 _node_logger = logging.getLogger("graph.node")
 
 
+async def resolve_tenant_gemini_key(tenant_id: UUID | None) -> str | None:
+    """Return the tenant's own Gemini API key from crm_configs, or None.
+
+    Falls back to ``settings.gemini_api_key`` (the platform key) when the
+    tenant has no ``gemini`` crm_configs row, the row can't be decrypted, or
+    no tenant context is available.  Never raises — a resolution failure
+    degrades to the platform key so the agent keeps working.
+    """
+    if tenant_id is None:
+        return settings.gemini_api_key
+
+    try:
+        from app.database.crud import get_crm_config
+        from app.database.session import async_session_factory
+        from app.integrations.encryption import decrypt_json
+
+        async with async_session_factory() as session:
+            row = await get_crm_config(session, tenant_id, integration_type="gemini")
+            if row is None or not row.config:
+                return settings.gemini_api_key
+            cfg = decrypt_json(row.config, tenant_id=tenant_id)
+            key = (cfg or {}).get("api_key")
+            return key or settings.gemini_api_key
+    except Exception:
+        logger.warning(
+            "Failed to resolve tenant Gemini key for tenant=%s — using platform key",
+            tenant_id,
+            exc_info=True,
+        )
+        return settings.gemini_api_key
+
+
 def route_after_greeting(state: AgentState) -> str:
     intent = state.get("lead_intent", "unknown")
     _node_logger.debug("route_after_greeting: intent=%s", intent)
@@ -144,13 +176,13 @@ def get_entry_point(state: AgentState) -> str:
     return "greeting"
 
 
-def build_graph() -> CompiledStateGraph:
+def build_graph(api_key: str | None = None) -> CompiledStateGraph:
     logger.debug("building graph with model=%s", settings.gemini_model)
 
     model = ChatGoogleGenerativeAI(
         model=settings.gemini_model,
         temperature=settings.gemini_temperature,
-        api_key=settings.gemini_api_key,
+        api_key=api_key or settings.gemini_api_key,
         timeout=settings.gemini_timeout,
     )
     model = RetryingGeminiModel(model)
@@ -234,13 +266,35 @@ def build_graph() -> CompiledStateGraph:
 
 
 _agent_graph: CompiledStateGraph | None = None
+_tenant_graphs: dict[str, CompiledStateGraph] = {}
+_tenant_graph_keys: dict[str, str | None] = {}
 
 
-def get_graph() -> CompiledStateGraph:
+def get_graph(tenant_id: UUID | None = None, api_key: str | None = None) -> CompiledStateGraph:
+    """Return the compiled graph for the given tenant.
+
+    Tenants with a stored Gemini key (onboard_client writes it to
+    ``crm_configs``) get a graph built with their own key, cached per tenant.
+    Tenants without a stored key share the single platform graph built with
+    ``settings.gemini_api_key`` (the legacy ``_agent_graph`` singleton, so
+    existing tests that reset it keep working).  Pass the already-resolved
+    ``api_key`` to avoid an extra DB round-trip.
+    """
     global _agent_graph
-    if _agent_graph is None:
-        _agent_graph = build_graph()
-    return _agent_graph
+    if tenant_id is None:
+        if _agent_graph is None:
+            _agent_graph = build_graph(api_key=api_key)
+        return _agent_graph
+
+    key = str(tenant_id)
+    cached_key = _tenant_graph_keys.get(key)
+    if key in _tenant_graphs and cached_key == api_key:
+        return _tenant_graphs[key]
+    logger.debug("building per-tenant graph for tenant=%s (has own key=%s)", tenant_id, bool(api_key))
+    graph = build_graph(api_key=api_key)
+    _tenant_graphs[key] = graph
+    _tenant_graph_keys[key] = api_key
+    return graph
 
 
 async def run_agent(
@@ -275,7 +329,8 @@ async def run_agent(
     # Fix: delete the checkpoint for this thread BEFORE every call.  The graph starts
     # fresh from our Postgres-reconstituted turn_input, and within ainvoke the
     # MemorySaver still provides consistency across nodes in the same turn.
-    graph = get_graph()
+    tenant_api_key = await resolve_tenant_gemini_key(tenant_id)
+    graph = get_graph(tenant_id, api_key=tenant_api_key)
     if graph.checkpointer is not None:
         await graph.checkpointer.adelete_thread(thread_key)
 
