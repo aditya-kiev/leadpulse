@@ -211,6 +211,16 @@ alembic downgrade 001_initial_schema
 - [ ] Existing clients notified of new login credentials (or auto-generated)
 - [ ] Rollback plan documented and accessible to the on-call engineer
 
+### Background workers
+
+The `crm_worker` service (`python -m app.services.crm_worker`) must be
+running for failed synchronous CRM pushes to be retried. It drains the Redis
+list `crm:push:queue` and re-queries the CRM integration per attempt. Deploy
+it with the same `build:` / `env_file:` / `environment:` / `depends_on:` as
+the `api` service (see `docker-compose.yml`) and keep `restart:
+unless-stopped` — bundled pushes will otherwise sit in the queue until the
+worker is up again.
+
 ## Key risks
 
 | Risk | Mitigation |

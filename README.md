@@ -16,6 +16,21 @@ export DATABASE_URL="postgresql+asyncpg://..."
 uvicorn app.main:app --reload
 ```
 
+## Deployment (docker compose)
+
+The stack runs three services:
+
+- `api` — the FastAPI application
+- `db` — Postgres
+- `redis` — Redis (session cache, rate limiting, CRM push retry queue)
+- `crm_worker` — standalone background process that drains the
+  `crm:push:queue` list and retries failed synchronous CRM pushes
+
+**The `crm_worker` service must be running for CRM push retries to be
+processed.** It is started by `docker compose up -d` alongside the `api`;
+if it is ever stopped, failed pushes will queue indefinitely in Redis and
+never be retried.
+
 ## Environment Variables
 
 | Variable | Default | Purpose |
