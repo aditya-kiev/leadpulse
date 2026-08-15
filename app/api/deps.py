@@ -49,6 +49,11 @@ async def rate_limit_webhook(request: Request) -> None:
         return
     ip = request.client.host if request.client else "unknown"
 
+    # Rate limiter is deliberately keyed per client IP. This is fine for the
+    # current embedded widget/browser use case (one IP per end-user), but it
+    # should be revisited (e.g. keyed by widget_key/tenant_id) before selling
+    # server-to-server API access that sits behind shared infrastructure,
+    # where many tenants can share a single egress IP.
     limiter = RedisSlidingWindowRateLimiter(key_prefix=f"ratelimit:webhook:{ip}")
     wait = await limiter.acquire(rpm, window=60)
     if wait == -1:
