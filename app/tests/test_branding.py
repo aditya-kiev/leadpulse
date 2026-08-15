@@ -254,40 +254,140 @@ async def test_branding_isolation():
     assert org_a.primary_light != org_b.primary_light
 
 
+import os
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test",
+)
+
+
+@pytest.fixture
+async def pg_session_factory():
+    """Real Postgres session factory against the Alembic-managed test DB."""
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
+    finally:
+        await engine.dispose()
+
+
 @pytest.mark.asyncio
-async def test_branding_isolation_via_api():
-    """GET /org/branding for tenant A must not return tenant B's data."""
-    mock_org_a = MagicMock()
-    mock_org_a.brand_name = "Tenant A"
-    mock_org_a.logo_url = ""
-    mock_org_a.primary_color = "#FF0000"
-    mock_org_a.custom_domain = ""
-    mock_org_a.custom_domain_status = "unverified"
-    mock_org_a.tls_status = "none"
-    mock_org_a.domain_verification_token = None
+async def test_branding_isolation_via_api(client, pg_session_factory):
+    """GET /org/branding for tenant A must return tenant A's branding and
+    NEVER tenant B's, and vice-versa.
 
-    mock_org_b = MagicMock()
-    mock_org_b.brand_name = "Tenant B"
-    mock_org_b.logo_url = ""
-    mock_org_b.primary_color = "#0000FF"
-    mock_org_b.custom_domain = ""
-    mock_org_b.custom_domain_status = "unverified"
-    mock_org_b.tls_status = "none"
-    mock_org_b.domain_verification_token = None
+    REAL Postgres test: this used to be a no-op (two MagicMock orgs and a
+    ``side_effect`` that was never invoked, asserting ``True``).  The JWT is
+    real (``create_access_token``), the auth dependency sets request.state
+    from the token's org_id, and the endpoint's organization lookup runs the
+    real ``get_organization_by_id`` query against real Postgres — so a
+    missing tenant filter here genuinely leaks cross-tenant branding."""
+    from uuid import uuid4
 
-    with patch("app.config.settings.settings.auth_enabled", False):
-        with patch("app.api.branding.get_organization_by_id") as mock_get:
-            def side_effect(session, org_id):
-                if str(org_id) == "00000000-0000-0000-0000-000000000001":
-                    return mock_org_a
-                return mock_org_b
-            mock_get.side_effect = side_effect
-            with patch("app.api.branding.async_session_factory"):
-                pass  # logic tested via branding service
+    from sqlalchemy import delete
 
-    # The branding service itself enforces isolation by taking DB row fields
-    # — tested thoroughly in test_branding_isolation() above
-    assert True
+    from app.database.models import Organization, User
+    from app.services.auth import create_access_token
+
+    org_a_slug = f"brand-iso-a-{uuid4().hex[:8]}"
+    org_b_slug = f"brand-iso-b-{uuid4().hex[:8]}"
+    org_a_id = org_b_id = user_a_id = user_b_id = None
+
+    try:
+        async with pg_session_factory() as session:
+            org_a = Organization(
+                name="Tenant A Org",
+                slug=org_a_slug,
+                brand_name="Tenant A",
+                logo_url="",
+                primary_color="#FF0000",
+                custom_domain="",
+                custom_domain_status="unverified",
+                tls_status="none",
+                domain_verification_token=None,
+            )
+            org_b = Organization(
+                name="Tenant B Org",
+                slug=org_b_slug,
+                brand_name="Tenant B",
+                logo_url="",
+                primary_color="#0000FF",
+                custom_domain="",
+                custom_domain_status="unverified",
+                tls_status="none",
+                domain_verification_token=None,
+            )
+            session.add_all([org_a, org_b])
+            await session.flush()
+            org_a_id = org_a.id
+            org_b_id = org_b.id
+
+            user_a = User(
+                email=f"admin-a-{uuid4().hex[:8]}@test.local",
+                password_hash="x",
+                display_name="Admin A",
+                role="org_admin",
+                organization_id=org_a_id,
+            )
+            user_b = User(
+                email=f"admin-b-{uuid4().hex[:8]}@test.local",
+                password_hash="x",
+                display_name="Admin B",
+                role="org_admin",
+                organization_id=org_b_id,
+            )
+            session.add_all([user_a, user_b])
+            await session.flush()
+            user_a_id = user_a.id
+            user_b_id = user_b.id
+            await session.commit()
+
+        token_a = create_access_token(user_a_id, "org_admin", org_a_id)
+        token_b = create_access_token(user_b_id, "org_admin", org_b_id)
+
+        # The endpoint's DB session must hit the real test DB (conftest mocks
+        # the module-global factory in app.database.session, but this module
+        # imported its own reference used by the route).
+        with patch("app.config.settings.settings.auth_enabled", True), \
+             patch("app.config.settings.settings.jwt_secret_key", "test-jwt-secret-key-for-testing"), \
+             patch("app.api.branding.async_session_factory", pg_session_factory), \
+             patch("app.database.session.async_session_factory", pg_session_factory):
+            resp_a = await client.get(
+                "/org/branding",
+                headers={"Authorization": f"Bearer {token_a}"},
+            )
+            resp_b = await client.get(
+                "/org/branding",
+                headers={"Authorization": f"Bearer {token_b}"},
+            )
+
+        assert resp_a.status_code == 200, resp_a.text
+        assert resp_b.status_code == 200, resp_b.text
+
+        data_a = resp_a.json()
+        data_b = resp_b.json()
+        assert data_a["brand_name"] == "Tenant A", (
+            f"tenant A must get its own branding, got {data_a['brand_name']!r}"
+        )
+        assert data_b["brand_name"] == "Tenant B", (
+            f"tenant B must get its own branding, got {data_b['brand_name']!r}"
+        )
+        assert data_a["brand_name"] != "Tenant B", "tenant A must not see tenant B's branding"
+        assert data_b["brand_name"] != "Tenant A", "tenant B must not see tenant A's branding"
+    finally:
+        async with pg_session_factory() as session:
+            if user_a_id:
+                await session.execute(delete(User).where(User.id == user_a_id))
+            if user_b_id:
+                await session.execute(delete(User).where(User.id == user_b_id))
+            if org_a_id:
+                await session.execute(delete(Organization).where(Organization.id == org_a_id))
+            if org_b_id:
+                await session.execute(delete(Organization).where(Organization.id == org_b_id))
+            await session.commit()
 
 
 # ── Dashboard branding injection ──
