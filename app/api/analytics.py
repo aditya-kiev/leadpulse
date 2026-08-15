@@ -37,7 +37,7 @@ class OrgMetricsOut(BaseModel):
     qualification_rate: float
     booking_rate: float
     funnel: FunnelMetric
-    average_qualification_score: float
+    average_qualification_score: float | None = None
     meetings_booked: int
     human_escalations: int
     average_response_time_seconds: float | None = None

@@ -185,6 +185,86 @@ async def test_analytics_metrics_endpoint_real_db_returns_200(pg_session_factory
                 await session.commit()
 
 
+@pytest.mark.asyncio
+async def test_analytics_metrics_null_avg_score_is_none_real_db(pg_session_factory):
+    """REAL Postgres: when no conversation has a qualification_score, the
+    SQL AVG() returns NULL and /analytics/metrics must report
+    average_qualification_score as null — never 0.0.
+
+    Regression: the old code coerced NULL to ``0``, so a tenant with zero
+    scored conversations showed a fake ``0.0`` average (an empty org looked
+    identical to an org whose every lead scored a 0)."""
+    from app.api import analytics as analytics_api
+    from app.api.deps import get_current_user as real_get_current_user
+    from app.services import analytics as analytics_service
+
+    org_slug = f"analytics-null-{uuid4().hex[:8]}"
+    tid = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Analytics NULL Score", slug=org_slug)
+            session.add(org)
+            await session.flush()
+            tid = org.id
+            session.add_all([
+                LeadConversation(
+                    session_id=f"it-null-{uuid4().hex[:8]}-1",
+                    tenant_id=tid,
+                    lead_status="hot",
+                    booking_confirmed=True,
+                    human_escalated=False,
+                    qualification_score=None,
+                    conversation_stage="qualified",
+                    created_at=datetime.utcnow() - timedelta(days=1),
+                ),
+                LeadConversation(
+                    session_id=f"it-null-{uuid4().hex[:8]}-2",
+                    tenant_id=tid,
+                    lead_status="cold",
+                    booking_confirmed=False,
+                    human_escalated=False,
+                    qualification_score=None,
+                    conversation_stage="greeting",
+                    created_at=datetime.utcnow() - timedelta(days=2),
+                ),
+            ])
+            await session.commit()
+
+        async def mock_auth(request: Request):
+            request.state.tenant_id = tid
+            return (None, "org_admin", tid)
+
+        app.dependency_overrides[real_get_current_user] = mock_auth
+        try:
+            with patch.object(analytics_service, "async_session_factory", pg_session_factory):
+                transport = ASGITransport(app=app)
+                async with AsyncClient(transport=transport, base_url="http://test") as ac:
+                    response = await ac.get(
+                        "/analytics/metrics",
+                        params={
+                            "start_date": (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d"),
+                            "end_date": datetime.utcnow().strftime("%Y-%m-%d"),
+                        },
+                    )
+        finally:
+            app.dependency_overrides.pop(real_get_current_user, None)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["lead_volume"]["total"] == 2
+        assert data["average_qualification_score"] is None, (
+            f"expected null average_qualification_score, got {data['average_qualification_score']!r}"
+        )
+    finally:
+        async with pg_session_factory() as session:
+            if tid:
+                from sqlalchemy import delete
+                await session.execute(
+                    delete(LeadConversation).where(LeadConversation.tenant_id == tid)
+                )
+                await session.execute(delete(Organization).where(Organization.id == tid))
+                await session.commit()
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)

@@ -272,7 +272,7 @@ function renderMetrics(metrics) {
     { label: 'Cold Leads', value: lv.cold, sub: lv.total ? fmtPct(lv.cold / lv.total) : '', cls: 'badge-cold' },
     { label: 'Qualification Rate', value: fmtPct(metrics.qualification_rate), sub: '' },
     { label: 'Booking Rate', value: fmtPct(metrics.booking_rate), sub: '' },
-    { label: 'Avg Score', value: metrics.average_qualification_score.toFixed(2), sub: '/ 1.0' },
+    { label: 'Avg Score', value: (metrics.average_qualification_score == null ? '—' : metrics.average_qualification_score.toFixed(2)), sub: '/ 1.0' },
     { label: 'Meetings Booked', value: metrics.meetings_booked, sub: '' },
   ];
   grid.innerHTML = cards.map(c => `

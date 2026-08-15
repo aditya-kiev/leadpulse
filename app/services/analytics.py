@@ -74,7 +74,7 @@ async def compute_org_metrics(
 
     qual_rate = len(qualified) / total if total else 0
     booking_rate = len(booked) / total if total else 0
-    avg_score = sum(c.qualification_score for c in scored) / len(scored) if scored else 0
+    avg_score = sum(c.qualification_score for c in scored) / len(scored) if scored else None
 
     funnel = {
         "total": total,
@@ -118,7 +118,7 @@ async def compute_org_metrics(
         "qualification_rate": round(qual_rate, 4),
         "booking_rate": round(booking_rate, 4),
         "funnel": funnel,
-        "average_qualification_score": round(avg_score, 4),
+        "average_qualification_score": round(avg_score, 4) if avg_score is not None else None,
         "meetings_booked": len(booked),
         "human_escalations": len(escalated),
         "average_response_time_seconds": average_response_time_seconds,
