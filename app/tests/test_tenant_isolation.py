@@ -7,19 +7,38 @@ These tests verify that:
    2. JWT tokens embed org_id and role correctly
    3. Role-based access is enforced at the dependency layer
 """
+import asyncio
+import os
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.main import app
 from app.services.auth import create_access_token, decode_token
 
-
 ORG_A_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 ORG_B_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
 USER_A_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test",
+)
+
+
+@pytest.fixture
+async def pg_session_factory():
+    """Real Postgres session factory against the Alembic-managed test DB."""
+    engine = create_async_engine(TEST_DATABASE_URL, pool_size=20, max_overflow=20)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -261,3 +280,128 @@ def test_expired_token_rejected():
         expired = jwt.encode(payload, "test-secret", algorithm="HS256")
         result = decode_token(expired)
         assert result is None, "Expired token should not decode"
+
+
+# ── Real-DB Concurrent Cross-Tenant Isolation ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_concurrent_cross_tenant_widget_conversations(client, pg_session_factory):
+    """Under concurrent load, 10+ widget conversations per tenant must each be
+    stored under their OWN tenant_id — zero cross-tenant wiring.
+
+    REAL Postgres test: two real Organizations with distinct widget keys, real
+    ``authenticate_request`` widget-key auth, the real webhook handler, and the
+    real ``memory_service.save_state`` write path. Only the LLM is mocked.
+    Afterwards a raw SQL scan of ``lead_conversations`` must show every row
+    tenant-scoped to the widget key that created it, and org B must not be able
+    to read org A's conversation through ``get_conversation``."""
+    from uuid import uuid4
+
+    from sqlalchemy import delete
+
+    from app.database.crud import get_conversation
+    from app.database.models import Organization
+
+    org_a_slug = f"iso-conc-a-{uuid4().hex[:8]}"
+    org_b_slug = f"iso-conc-b-{uuid4().hex[:8]}"
+    wk_a = f"wk-conc-a-{uuid4().hex[:8]}"
+    wk_b = f"wk-conc-b-{uuid4().hex[:8]}"
+    org_a_id = org_b_id = None
+    sessions_a = [f"conc-a-{i}-{uuid4().hex[:6]}" for i in range(12)]
+    sessions_b = [f"conc-b-{i}-{uuid4().hex[:6]}" for i in range(12)]
+
+    try:
+        async with pg_session_factory() as session:
+            org_a = Organization(
+                name="Tenant A (concurrent)",
+                slug=org_a_slug,
+                brand_name="Tenant A",
+                logo_url="",
+                primary_color="#FF0000",
+                custom_domain="",
+                custom_domain_status="unverified",
+                tls_status="none",
+                domain_verification_token=None,
+                widget_key=wk_a,
+            )
+            org_b = Organization(
+                name="Tenant B (concurrent)",
+                slug=org_b_slug,
+                brand_name="Tenant B",
+                logo_url="",
+                primary_color="#0000FF",
+                custom_domain="",
+                custom_domain_status="unverified",
+                tls_status="none",
+                domain_verification_token=None,
+                widget_key=wk_b,
+            )
+            session.add_all([org_a, org_b])
+            await session.flush()
+            org_a_id = org_a.id
+            org_b_id = org_b.id
+            await session.commit()
+
+        canned = {
+            "conversation_history": [{"role": "assistant", "content": "ok"}],
+            "lead_status": "hot",
+            "booking_confirmed": False,
+            "meeting_time": None,
+            "human_escalated": False,
+            "next_action": None,
+        }
+
+        async def fire(widget_key: str, session_id: str) -> int:
+            with patch("app.database.session.async_session_factory", pg_session_factory), \
+                 patch("app.services.memory.async_session_factory", pg_session_factory), \
+                 patch("app.config.settings.settings.webhook_rpm_limit", 0), \
+                 patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:
+                mock_agent.return_value = canned
+                resp = await client.post(
+                    "/webhook/message",
+                    json={"session_id": session_id, "message": "I want to book a demo"},
+                    headers={"X-Widget-Key": widget_key},
+                )
+                return resp.status_code
+
+        async def fire_many(widget_key: str, sessions: list[str]) -> list[int]:
+            return await asyncio.gather(*(fire(widget_key, s) for s in sessions))
+
+        grouped = await asyncio.gather(fire_many(wk_a, sessions_a), fire_many(wk_b, sessions_b))
+        statuses = [s for group in grouped for s in group]
+        assert all(s == 200 for s in statuses), f"non-200 responses: {statuses}"
+
+        expected = {sid: org_a_id for sid in sessions_a}
+        expected.update({sid: org_b_id for sid in sessions_b})
+
+        async with pg_session_factory() as session:
+            rows = (
+                await session.execute(
+                    text("SELECT session_id, tenant_id FROM lead_conversations WHERE session_id LIKE 'conc-%'")
+                )
+            ).fetchall()
+
+        stored = {r.session_id: r.tenant_id for r in rows if r.session_id is not None}
+        assert len(stored) == len(expected), (
+            f"expected one row per fired conversation ({len(expected)}), got {len(stored)}"
+        )
+        for sid, org in expected.items():
+            assert stored.get(sid) == org, (
+                f"session {sid} stored under tenant {stored.get(sid)}, expected {org}"
+            )
+
+        # Read-side isolation: org B must NOT resolve to org A's conversation
+        # through get_conversation even with org A's exact session id.
+        async with pg_session_factory() as session:
+            across = await get_conversation(session, sessions_a[0], tenant_id=org_b_id)
+            own = await get_conversation(session, sessions_a[0], tenant_id=org_a_id)
+        assert across is None, "org B read org A's conversation — tenant filter missing"
+        assert own is not None, "org A must still read its own conversation"
+    finally:
+        async with pg_session_factory() as session:
+            await session.execute(text("DELETE FROM lead_conversations WHERE session_id LIKE 'conc-%'"))
+            if org_a_id:
+                await session.execute(delete(Organization).where(Organization.id == org_a_id))
+            if org_b_id:
+                await session.execute(delete(Organization).where(Organization.id == org_b_id))
+            await session.commit()
