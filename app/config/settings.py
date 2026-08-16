@@ -63,8 +63,10 @@ class Settings(BaseSettings):
     # Rate limits for the public auth endpoints. NOTE: "rpm" here means
     # "requests per limiter window", NOT requests per minute (unlike the
     # per-minute limits above). Forgot-password is keyed by the target email
-    # and uses a 1-hour window to stop mail-bombing.
+    # and uses a 1-hour window to stop mail-bombing; login is keyed by the
+    # (email, IP) pair with a 15-minute window to stop brute-forcing.
     password_reset_rpm_limit: int = 3
+    login_rpm_limit: int = 10
 
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"

@@ -82,6 +82,7 @@ async def rate_limit_webhook(request: Request) -> None:
 # In-memory fallbacks for the public auth endpoints (per-process only).
 # Kept separate from _webhook_inmem so the two limiters never share state.
 _pwreset_inmem: dict[str, deque[float]] = defaultdict(deque)
+_login_inmem: dict[str, deque[float]] = defaultdict(deque)
 
 
 def reset_password_reset_rate_limits() -> None:
@@ -89,9 +90,25 @@ def reset_password_reset_rate_limits() -> None:
     _pwreset_inmem.clear()
 
 
+def reset_login_rate_limits() -> None:
+    """Clear in-memory login rate-limit state (test helper)."""
+    _login_inmem.clear()
+
+
 def _inmem_pwreset_allowed(key: str, limit: int, window: float = 3600.0) -> bool:
     now = time.monotonic()
     dq = _pwreset_inmem[key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
+def _inmem_login_allowed(key: str, limit: int, window: float = 900.0) -> bool:
+    now = time.monotonic()
+    dq = _login_inmem[key]
     while dq and now - dq[0] > window:
         dq.popleft()
     if len(dq) >= limit:
@@ -133,6 +150,48 @@ async def rate_limit_password_reset(request: Request) -> None:
                 status_code=429,
                 detail="Too many requests. Please slow down.",
                 headers={"Retry-After": "3600"},
+            )
+        return
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
+
+async def rate_limit_login(request: Request) -> None:
+    """Per-(email, IP) rate limiting for /auth/login (brute-force defense).
+
+    Keyed by the combined (email, client IP) pair so hammering one account from
+    one source trips the limiter, while a single NAT/office IP shared by many
+    legitimate users isn't locked out for the whole cohort. Uses the shared Redis
+    sliding-window limiter with a 15-minute window (login_rpm_limit), falling
+    back to an in-memory sliding window when Redis is unavailable. A successful
+    login does NOT reset the counter (only time passing frees budget) so this
+    can't be used to probe whether a guess was correct.
+    """
+    rpm = settings.login_rpm_limit
+    if rpm <= 0:
+        return
+    ip = request.client.host if request.client else "unknown"
+    email = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            email = (body.get("email") or "").strip().lower()
+    except Exception:
+        email = ""
+
+    scope_key = f"ratelimit:login:{email}:{ip}"
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=scope_key)
+    wait = await limiter.acquire(rpm, window=900)
+    if wait == -1:
+        if not _inmem_login_allowed(f"{scope_key}:inmem", rpm):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": "900"},
             )
         return
     if wait > 0:

@@ -23,6 +23,7 @@ from app.services.auth import (
 )
 from app.api.deps import (
     get_current_user,
+    rate_limit_login,
     rate_limit_password_reset,
     require_role,
 )
@@ -94,7 +95,7 @@ class ResetPasswordOut(BaseModel):
     ok: bool = True
 
 
-@router.post("/login", response_model=LoginOut)
+@router.post("/login", response_model=LoginOut, dependencies=[Depends(rate_limit_login)])
 async def login(payload: LoginIn, session: AsyncSession = Depends(get_session)):
     user = await get_user_by_email(session, payload.email)
     if not user or not verify_password(payload.password, user.password_hash):
