@@ -41,8 +41,24 @@ async def resolve_tenant_gemini_key(tenant_id: UUID | None) -> str | None:
     no tenant context is available.  Never raises — a resolution failure
     degrades to the platform key so the agent keeps working.
     """
+    cfg = await resolve_tenant_config(tenant_id)
+    return (cfg or {}).get("api_key") or settings.gemini_api_key
+
+
+async def resolve_tenant_config(tenant_id: UUID | None) -> dict:
+    """Return the tenant's decrypted ``gemini`` crm_configs row, or {}.
+
+    onboard_client stores the per-tenant Gemini key together with the
+    tenant's ``vertical`` and ``business_name`` in this row.  Previously only
+    ``api_key`` was ever read, so prompts and lead scoring ran on the global
+    ``settings.vertical`` / ``settings.business_name`` for every tenant in the
+    process — the per-tenant vertical/business_name were dead data.
+
+    Returns the full decrypted config dict (``api_key``, ``vertical``,
+    ``business_name``).  Never raises — failures degrade to {}.
+    """
     if tenant_id is None:
-        return settings.gemini_api_key
+        return {}
 
     try:
         from app.database.crud import get_crm_config
@@ -52,17 +68,16 @@ async def resolve_tenant_gemini_key(tenant_id: UUID | None) -> str | None:
         async with async_session_factory() as session:
             row = await get_crm_config(session, tenant_id, integration_type="gemini")
             if row is None or not row.config:
-                return settings.gemini_api_key
-            cfg = decrypt_json(row.config, tenant_id=tenant_id)
-            key = (cfg or {}).get("api_key")
-            return key or settings.gemini_api_key
+                return {}
+            cfg = decrypt_json(row.config, tenant_id=tenant_id) or {}
+            return cfg
     except Exception:
         logger.warning(
-            "Failed to resolve tenant Gemini key for tenant=%s — using platform key",
+            "Failed to resolve tenant config for tenant=%s — using global settings",
             tenant_id,
             exc_info=True,
         )
-        return settings.gemini_api_key
+        return {}
 
 
 def route_after_greeting(state: AgentState) -> str:
@@ -337,6 +352,16 @@ async def run_agent(
     tenant_id_str = str(tenant_id) if tenant_id else None
     turn_input = get_initial_state(session_id, channel, tenant_id=tenant_id_str)
     turn_input["messages"] = [{"role": "user", "content": message}]
+
+    # Per-tenant vertical/business_name (from the gemini crm_configs row, set
+    # at onboarding) drive prompt selection and lead scoring.  Never raises —
+    # missing/undecryptable configs fall back to {} and the nodes use global
+    # settings as their default.
+    tenant_cfg = await resolve_tenant_config(tenant_id)
+    if tenant_cfg.get("vertical"):
+        turn_input["vertical"] = tenant_cfg["vertical"]
+    if tenant_cfg.get("business_name"):
+        turn_input["business_name"] = tenant_cfg["business_name"]
 
     persisted = await memory_service.load_state(session_id, tenant_id=tenant_id)
     if persisted:

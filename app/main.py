@@ -178,6 +178,10 @@ if settings.debug and settings.environment != "production":
     app.include_router(debug_router)
 app.include_router(analytics_router)
 app.include_router(branding_router)
+if settings.stripe_enabled:
+    from app.api.billing import router as billing_router
+
+    app.include_router(billing_router)
 
 
 # ── Static marketing pages (hosted from repo root `static/`) ──

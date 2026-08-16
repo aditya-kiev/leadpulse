@@ -50,7 +50,7 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
                 logger.warning("notify_tenant failed for session=%s: %s", state.get("session_id"), e)
 
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().END_CONVERSATION_PROMPT.format(
+            SystemMessage(content=get_prompts(state.get("vertical")).END_CONVERSATION_PROMPT.format(
                 lead_name=state.get("lead_name", "there"),
                 company_name=state.get("company_name", "your company"),
                 lead_status=state.get("lead_status", "new"),

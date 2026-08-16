@@ -9,13 +9,17 @@ from app.config.settings import settings
 from app.database.session import get_session
 from app.services.auth import (
     create_access_token,
+    create_password_reset_token,
     create_refresh_token,
     create_user,
     decode_token,
     get_user_by_email,
     get_user_by_id,
     hash_password,
+    revoke_password_reset_token,
+    store_password_reset_token,
     verify_password,
+    verify_password_reset_token,
 )
 from app.api.deps import get_current_user, require_role
 
@@ -69,6 +73,23 @@ class UserOut(BaseModel):
     is_active: bool
 
 
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+class ForgotPasswordOut(BaseModel):
+    ok: bool = True
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    new_password: str
+
+
+class ResetPasswordOut(BaseModel):
+    ok: bool = True
+
+
 @router.post("/login", response_model=LoginOut)
 async def login(payload: LoginIn, session: AsyncSession = Depends(get_session)):
     user = await get_user_by_email(session, payload.email)
@@ -95,20 +116,81 @@ async def register(payload: RegisterIn, session: AsyncSession = Depends(get_sess
     existing = await get_user_by_email(session, payload.email)
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
+
+    organization_id = None
+    if payload.organization_name:
+        from app.database.crud import create_organization
+        from app.services.slugs import slugify, unique_slug
+
+        slug = await unique_slug(session, slugify(payload.organization_name))
+        org = await create_organization(
+            session,
+            name=payload.organization_name,
+            slug=slug,
+        )
+        organization_id = org.id
+
     user = await create_user(
         session,
         email=payload.email,
         password=payload.password,
         display_name=payload.display_name,
         role="org_admin",
-        organization_id=None,
+        organization_id=organization_id,
     )
     return RegisterOut(
         user_id=str(user.id),
         email=user.email,
         role=user.role,
-        organization_id=str(user.organization_id) if user.organization_id else None,
+        organization_id=str(organization_id) if organization_id else None,
     )
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordOut)
+async def forgot_password(payload: ForgotPasswordIn, session: AsyncSession = Depends(get_session)):
+    """Request a password-reset email.
+
+    Always returns 200 (even when the email doesn't exist) to avoid leaking
+    which accounts are registered. When the user exists a single-use token is
+    created and emailed via the existing email path.
+    """
+    from datetime import datetime, timedelta
+
+    from app.services.notifications import send_password_reset_email
+
+    user = await get_user_by_email(session, payload.email)
+    if user is not None and user.is_active:
+        try:
+            token = create_password_reset_token(user)
+            payload_claims = decode_token(token)
+            if payload_claims is None:
+                raise RuntimeError("reset token failed to decode")
+            await store_password_reset_token(
+                session,
+                jti=payload_claims["jti"],
+                user_id=user.id,
+                expires_at=datetime.utcnow() + timedelta(minutes=settings.password_reset_token_ttl_minutes),
+            )
+            await send_password_reset_email(user.email, token)
+        except Exception as e:
+            logger.warning("forgot_password: token/email failed for masked user: %s", e)
+    return ForgotPasswordOut()
+
+
+@router.post("/reset-password", response_model=ResetPasswordOut)
+async def reset_password(payload: ResetPasswordIn, session: AsyncSession = Depends(get_session)):
+    """Reset a password using a single-use token.
+
+    Validates the signed token, confirms it hasn't been consumed, updates the
+    password hash, and revokes the token so it can't be replayed.
+    """
+    verified = await verify_password_reset_token(session, payload.token)
+    if verified is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user, jti = verified
+    user.password_hash = hash_password(payload.new_password)
+    await revoke_password_reset_token(session, jti)
+    return ResetPasswordOut()
 
 
 @router.post("/refresh", response_model=RefreshOut)

@@ -61,6 +61,7 @@ def create_qualification_node(model: ChatGoogleGenerativeAI):
                 "conversation_stage": "collecting",
             }
 
+        vertical = state.get("vertical") or settings.vertical
         score_data = LeadScoreIn(
             budget=state.get("budget"),
             timeline=state.get("timeline"),
@@ -68,7 +69,7 @@ def create_qualification_node(model: ChatGoogleGenerativeAI):
             problem_statement=state.get("problem_statement"),
             intent=IntentType(state.get("lead_intent") or "unknown"),
             lead_type=state.get("lead_type"),
-            vertical=settings.vertical,
+            vertical=vertical,
         )
 
         score_result = compute_lead_score(score_data)
@@ -79,7 +80,7 @@ def create_qualification_node(model: ChatGoogleGenerativeAI):
         ) if state.get("conversation_history") else ""
 
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().QUALIFICATION_SYSTEM_PROMPT.format(
+            SystemMessage(content=get_prompts(vertical).QUALIFICATION_SYSTEM_PROMPT.format(
                 lead_name=state.get("lead_name", "Unknown"),
                 company_name=state.get("company_name", "Unknown"),
                 industry=state.get("industry", "Unknown"),

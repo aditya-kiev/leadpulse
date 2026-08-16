@@ -37,27 +37,34 @@ def _inmem_webhook_allowed(ip: str, limit: int, window: float = 60.0) -> bool:
 
 
 async def rate_limit_webhook(request: Request) -> None:
-    """Basic per-IP rate limiting for public webhook endpoints.
+    """Per-tenant + per-IP rate limiting for public webhook endpoints.
 
-    Uses the shared Redis sliding-window limiter keyed by client IP. Falls
-    back to a per-process in-memory sliding window when Redis is down so the
-    webhook is never completely unguarded. Returns 429 with Retry-After when
-    the limit (webhook_rpm_limit) is exceeded.
+    Uses the shared Redis sliding-window limiter keyed by (tenant_id, client
+    IP) so that in multi-tenant deployments one tenant's burst on a shared
+    egress IP never exhausts every other tenant's budget (and vice versa).
+    Falls back to a per-process in-memory sliding window when Redis is down so
+    the webhook is never completely unguarded. Returns 429 with Retry-After
+    when the limit (webhook_rpm_limit) is exceeded.
     """
     rpm = settings.webhook_rpm_limit
     if rpm <= 0:
         return
     ip = request.client.host if request.client else "unknown"
 
-    # Rate limiter is deliberately keyed per client IP. This is fine for the
-    # current embedded widget/browser use case (one IP per end-user), but it
-    # should be revisited (e.g. keyed by widget_key/tenant_id) before selling
-    # server-to-server API access that sits behind shared infrastructure,
-    # where many tenants can share a single egress IP.
-    limiter = RedisSlidingWindowRateLimiter(key_prefix=f"ratelimit:webhook:{ip}")
+    # authenticate_request runs before this dependency (signature order) and
+    # stamps request.state.tenant_id for widget/JWT-authenticated requests.
+    # Key by tenant when known, else fall back to the raw IP so anonymous
+    # traffic still gets a shared per-IP budget.
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if tenant_id is not None:
+        scope_key = f"ratelimit:webhook:{tenant_id}:{ip}"
+    else:
+        scope_key = f"ratelimit:webhook:{ip}"
+
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=scope_key)
     wait = await limiter.acquire(rpm, window=60)
     if wait == -1:
-        if not _inmem_webhook_allowed(ip, rpm):
+        if not _inmem_webhook_allowed(f"{scope_key}:inmem", rpm):
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Please slow down.",

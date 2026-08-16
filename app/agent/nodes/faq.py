@@ -18,9 +18,11 @@ def create_faq_node(model: ChatGoogleGenerativeAI):
         user_message = safe_text(raw_last)
         logger.info("NODE faq ENTERED: user_message=%s", log_fingerprint(user_message))
 
+        business_name = state.get("business_name") or _settings.business_name
+        vertical = state.get("vertical") or _settings.vertical
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().FAQ_SYSTEM_PROMPT.format(
-                company_name=_settings.business_name,
+            SystemMessage(content=get_prompts(vertical).FAQ_SYSTEM_PROMPT.format(
+                company_name=business_name,
                 input=user_message,
             )),
             HumanMessage(content=user_message),

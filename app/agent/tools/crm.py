@@ -14,7 +14,29 @@ async def update_crm(session_id: str, lead_data: dict, tenant_id: UUID | None = 
         logger.info("CRM push skipped: no tenant_id for session=%s", session_id)
         return {"status": "skipped", "reason": "no_tenant"}
 
-    integration = await resolve_integration(tenant_id)
+    # Resolution must never break the conversation turn. If the CRM config
+    # lookup itself fails (DB down, encryption key missing, ...), degrade to
+    # a logged failure instead of raising into the graph node.
+    try:
+        integration = await resolve_integration(tenant_id)
+    except Exception as e:
+        logger.error(
+            "CRM integration resolution failed tenant=%s session=%s: %s",
+            tenant_id, session_id, e,
+        )
+        try:
+            await log_crm_push(
+                organization_id=tenant_id,
+                integration_type="unknown",
+                session_id=session_id,
+                status="resolution_failed",
+                attempt=1,
+                lead_data=lead_data,
+                error_message=f"CRM integration resolution failed: {e}",
+            )
+        except Exception as log_err:
+            logger.warning("Failed to log CRM resolution failure for session=%s: %s", session_id, log_err)
+        return {"status": "failed", "error": "resolution_failed"}
 
     try:
         result = await retry_with_backoff(

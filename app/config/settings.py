@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_access_token_ttl_minutes: int = 30
     jwt_refresh_token_ttl_days: int = 30
+    password_reset_token_ttl_minutes: int = 30
 
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"
@@ -75,6 +76,11 @@ class Settings(BaseSettings):
     kvcore_api_secret: str = ""
     ams360_api_key: str = ""
     ams360_api_secret: str = ""
+
+    # Billing / Stripe
+    stripe_enabled: bool = False
+    stripe_api_key: str = ""
+    stripe_webhook_secret: str = ""
 
 
 settings = Settings()

@@ -19,7 +19,7 @@ def create_human_handoff_node(model: ChatGoogleGenerativeAI):
         logger.info("NODE human_handoff ENTERED: user_message=%s", log_fingerprint(user_message))
 
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().HUMAN_HANDOFF_SYSTEM_PROMPT.format(
+            SystemMessage(content=get_prompts(state.get("vertical")).HUMAN_HANDOFF_SYSTEM_PROMPT.format(
                 confidence=state.get("confidence", 0.0),
                 threshold=settings.human_handoff_confidence,
                 lead_name=state.get("lead_name", "Unknown"),

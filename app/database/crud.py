@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import LeadConversation, Organization, User, CRMConfig, PushLog, UsageLog, DailyOrgSummary
 from app.database.session import async_session_factory
+from app.services.billing import is_billing_current
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,10 @@ async def get_organization_by_widget_key(
             Organization.is_active == True,
         )
     )
-    return result.scalar_one_or_none()
+    org = result.scalar_one_or_none()
+    if org is not None and not is_billing_current(org):
+        return None
+    return org
 
 
 async def list_organizations(

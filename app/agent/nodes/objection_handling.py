@@ -33,7 +33,7 @@ def create_objection_handling_node(model: ChatGoogleGenerativeAI):
             }
 
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().OBJECTION_HANDLING_SYSTEM_PROMPT.format(
+            SystemMessage(content=get_prompts(state.get("vertical")).OBJECTION_HANDLING_SYSTEM_PROMPT.format(
                 objection_type=objection_type,
                 lead_name=state.get("lead_name", "there"),
                 company_name=state.get("company_name", "your company"),

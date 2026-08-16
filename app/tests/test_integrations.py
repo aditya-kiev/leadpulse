@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -246,9 +247,11 @@ async def test_resolve_integration_no_config():
     @asynccontextmanager
     async def mock_session_factory():
         mock_session = AsyncMock()
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = mock_scalar
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
         yield mock_session
 
     with patch("app.integrations.registry.async_session_factory", side_effect=mock_session_factory):
@@ -268,15 +271,160 @@ async def test_resolve_integration_with_fub_config():
     @asynccontextmanager
     async def mock_session_factory():
         mock_session = AsyncMock()
-        mock_scalar = MagicMock()
-        mock_scalar.scalar_one_or_none.return_value = mock_db_row
-        mock_session.execute.return_value = mock_scalar
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [mock_db_row]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_session.execute.return_value = mock_result
         yield mock_session
 
     with patch("app.integrations.registry.async_session_factory", side_effect=mock_session_factory), \
          patch("app.integrations.registry.decrypt_json", return_value={"api_key": "fub-key"}):
         integration = await resolve_integration(TENANT_ID)
         assert integration.integration_type == "fub"
+
+
+# ── REAL Postgres: gemini credentials row must never be treated as a CRM ──
+#
+# Every tenant onboarded via onboard_client gets a ``gemini`` crm_configs
+# row (for the per-tenant API key). Once they connect a real CRM a second
+# active row (fub/kvcore/...) exists, and the old ``scalar_one_or_none()``
+# query crashed with MultipleResultsFound.
+
+_ENCRYPTION_KEY = "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE="
+
+
+@pytest.mark.asyncio
+async def test_resolve_integration_gemini_plus_fub_returns_fub(pg_session_factory):
+    """gemini (credentials) row + fub (CRM) row → resolve to the fub CRM,
+    NOT a MultipleResultsFound crash."""
+    from app.database.models import CRMConfig, Organization
+
+    org_id = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="CRM Resolve IT", slug=f"crm-res-{uuid4().hex[:8]}")
+            session.add(org)
+            await session.flush()
+            org_id = org.id
+            with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+                session.add_all([
+                    CRMConfig(
+                        organization_id=org.id,
+                        integration_type="gemini",
+                        config=encrypt_json({"api_key": "gem-key", "vertical": "real_estate"}, tenant_id=org.id),
+                        is_active=True,
+                    ),
+                    CRMConfig(
+                        organization_id=org.id,
+                        integration_type="fub",
+                        config=encrypt_json({"api_key": "fub-key"}, tenant_id=org.id),
+                        is_active=True,
+                    ),
+                ])
+            await session.commit()
+
+        with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+            with patch("app.integrations.registry.async_session_factory", pg_session_factory):
+                integration = await resolve_integration(org_id)
+        assert integration is not None
+        assert integration.integration_type == "fub"
+    finally:
+        async with pg_session_factory() as session:
+            if org_id:
+                await session.execute(delete(CRMConfig).where(CRMConfig.organization_id == org_id))
+                await session.execute(delete(Organization).where(Organization.id == org_id))
+                await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_resolve_integration_only_gemini_falls_back_to_webhook(pg_session_factory):
+    """gemini-only tenant (no CRM connected) → WebhookFallbackIntegration,
+    gateway of the current no-CRM behavior."""
+    from app.database.models import CRMConfig, Organization
+
+    org_id = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Gemini-Only IT", slug=f"gem-only-{uuid4().hex[:8]}")
+            session.add(org)
+            await session.flush()
+            org_id = org.id
+            with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+                session.add(CRMConfig(
+                    organization_id=org.id,
+                    integration_type="gemini",
+                    config=encrypt_json({"api_key": "gem-key"}, tenant_id=org.id),
+                    is_active=True,
+                ))
+            await session.commit()
+
+        with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+            with patch("app.integrations.registry.async_session_factory", pg_session_factory):
+                integration = await resolve_integration(org_id)
+        assert isinstance(integration, WebhookFallbackIntegration)
+        assert integration.integration_type == "webhook"
+    finally:
+        async with pg_session_factory() as session:
+            if org_id:
+                await session.execute(delete(CRMConfig).where(CRMConfig.organization_id == org_id))
+                await session.execute(delete(Organization).where(Organization.id == org_id))
+                await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_resolve_integration_two_crm_rows_picks_most_recent(pg_session_factory):
+    """If two real CRM rows are somehow active at once, pick the newest and
+    log a warning rather than raising."""
+    from sqlalchemy import update as sa_update
+    from app.database.models import CRMConfig, Organization
+
+    org_id = None
+    try:
+        async with pg_session_factory() as session:
+            org = Organization(name="Two CRM IT", slug=f"two-crm-{uuid4().hex[:8]}")
+            session.add(org)
+            await session.flush()
+            org_id = org.id
+            with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+                session.add_all([
+                    CRMConfig(
+                        organization_id=org.id,
+                        integration_type="kvcore",
+                        config=encrypt_json({"api_key": "old-key"}, tenant_id=org.id),
+                        is_active=True,
+                    ),
+                    CRMConfig(
+                        organization_id=org.id,
+                        integration_type="fub",
+                        config=encrypt_json({"api_key": "new-key"}, tenant_id=org.id),
+                        is_active=True,
+                    ),
+                ])
+            await session.commit()
+
+        # Force distinct created_at so ordering is deterministic (fub newest).
+        async with pg_session_factory() as session:
+            await session.execute(sa_update(CRMConfig)
+                                  .where(CRMConfig.integration_type == "kvcore",
+                                         CRMConfig.organization_id == org_id)
+                                  .values(created_at=datetime(2024, 1, 1)))
+            await session.execute(sa_update(CRMConfig)
+                                  .where(CRMConfig.integration_type == "fub",
+                                         CRMConfig.organization_id == org_id)
+                                  .values(created_at=datetime(2024, 1, 2)))
+            await session.commit()
+
+        with patch("app.config.settings.settings.crm_encryption_key", _ENCRYPTION_KEY):
+            with patch("app.integrations.registry.async_session_factory", pg_session_factory):
+                integration = await resolve_integration(org_id)
+        assert integration.integration_type == "fub"
+    finally:
+        async with pg_session_factory() as session:
+            if org_id:
+                await session.execute(delete(CRMConfig).where(CRMConfig.organization_id == org_id))
+                await session.execute(delete(Organization).where(Organization.id == org_id))
+                await session.commit()
 
 
 # ── Retry ─────────────────────────────────────────────────────────────────

@@ -265,6 +265,31 @@ class TestWidgetSnippet:
         )
         assert DEFAULT_WIDGET_TITLE in snippet
 
+    # ── FIX 3: widget must detect backend failures ─────────────────────────
+    # send()/start() used to swallow non-2xx responses: a 500 with a JSON
+    # error body was treated as a successful reply, so site visitors never
+    # knew the assistant was down. Now both check ``r.ok`` and render a
+    # distinct fallback message + console.error instead.
+
+    def test_send_checks_r_ok(self):
+        snippet = self._snippet()
+        assert "if (!r.ok) throw new Error('message endpoint HTTP ' + r.status);" in snippet
+
+    def test_start_checks_r_ok(self):
+        snippet = self._snippet()
+        assert "if (!r.ok) throw new Error('token endpoint HTTP ' + r.status);" in snippet
+        assert "if (!s.ok) throw new Error('start endpoint HTTP ' + s.status);" in snippet
+
+    def test_backend_failure_shows_distinct_fallback(self):
+        snippet = self._snippet()
+        assert "BACKEND_ERROR" in snippet
+        assert "something went wrong on our end" in snippet
+
+    def test_backend_failure_logged_to_console(self):
+        snippet = self._snippet()
+        assert "console.error('[LeadPulse] send failed: ' + (err && err.message));" in snippet
+        assert "console.error('[LeadPulse] start failed: ' + (err && err.message));" in snippet
+
 
 class TestChecklist:
     def _checklist(self):

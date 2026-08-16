@@ -37,7 +37,6 @@ import argparse
 import asyncio
 import logging
 import os
-import re
 import secrets
 import sys
 import uuid
@@ -56,9 +55,14 @@ DEFAULT_WIDGET_TITLE = "Chat with us"
 
 
 def slugify(name: str) -> str:
-    """Lowercase, alphanumeric + hyphen slug for tenant subdomains."""
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    return slug or "client"
+    """Lowercase, alphanumeric + hyphen slug for tenant subdomains.
+
+    Shared implementation lives in app/services/slugs.py so the register flow
+    and the onboarding CLI can never disagree on slug rules.
+    """
+    from app.services.slugs import slugify as _slugify
+
+    return _slugify(name)
 
 
 async def _slug_taken(factory, slug: str) -> bool:
@@ -105,6 +109,7 @@ def _widget_snippet(
   var TITLE = {title!r};
   var WIDGET_KEY = {widget_key_js};
   var sessionId = null, token = null, authHeaders = null, open = false, sending = false;
+  var BACKEND_ERROR = 'Sorry, something went wrong on our end — a team member will follow up with you shortly.';
 
   function css() {{
     return 'position:fixed;right:20px;bottom:20px;z-index:999999;font-family:Inter,system-ui,sans-serif;' +
@@ -151,21 +156,32 @@ def _widget_snippet(
   }}
   async function start() {{
     if (sessionId) return;
-    var r = await fetch(API + '/demo/token', {{ method: 'POST' }});
-    var d = await r.json();
-    sessionId = d.session_id; token = d.token;
-    authHeaders = {{ 'Content-Type': 'application/json', 'X-Demo-Token': token }};""" + (
+    try {{
+      var r = await fetch(API + '/demo/token', {{ method: 'POST' }});
+      if (!r.ok) throw new Error('token endpoint HTTP ' + r.status);
+      var d = await r.json();
+      sessionId = d.session_id; token = d.token;
+      authHeaders = {{ 'Content-Type': 'application/json', 'X-Demo-Token': token }};""" + (
         "\n    if (WIDGET_KEY) authHeaders['X-Widget-Key'] = WIDGET_KEY;" if widget_key else ""
     ) + f"""
+    }} catch (err) {{
+      console.error('[LeadPulse] start failed: ' + (err && err.message));
+      bubble('agent', BACKEND_ERROR);
+      return;
+    }}
     try {{
       var s = await fetch(API + '/webhook/start', {{
         method: 'POST',
         headers: authHeaders,
         body: JSON.stringify({{ session_id: sessionId, channel: 'web' }}),
       }});
+      if (!s.ok) throw new Error('start endpoint HTTP ' + s.status);
       var sd = await s.json();
       bubble('agent', sd.message || 'Hello! How can I help you today?');
-    }} catch (_) {{ bubble('agent', 'Hello! How can I help you today?'); }}
+    }} catch (err) {{
+      console.error('[LeadPulse] start failed: ' + (err && err.message));
+      bubble('agent', BACKEND_ERROR);
+    }}
   }}
   async function send() {{
     var input = document.getElementById('lp-input');
@@ -180,10 +196,12 @@ def _widget_snippet(
         headers: authHeaders,
         body: JSON.stringify({{ session_id: sessionId, message: text, channel: 'web' }}),
       }});
+      if (!r.ok) throw new Error('message endpoint HTTP ' + r.status);
       var d = await r.json();
       bubble('agent', d.reply || 'I understand. Let me help you with that.');
-    }} catch (_) {{
-      bubble('agent', 'Sorry, I had trouble reaching the assistant. Please try again.');
+    }} catch (err) {{
+      console.error('[LeadPulse] send failed: ' + (err && err.message));
+      bubble('agent', BACKEND_ERROR);
     }}
     sending = false;
   }}

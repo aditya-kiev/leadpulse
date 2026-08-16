@@ -47,6 +47,41 @@ async def get_org_notification_phone(tenant_id: UUID) -> str | None:
         return None
 
 
+def password_reset_url(token: str) -> str:
+    """Build the dashboard reset link. Falls back to app_hostname, else a
+    token-only form the operator can paste into the reset screen."""
+    host = (settings.app_hostname or "").strip()
+    if host:
+        host = host if host.startswith(("http://", "https://")) else f"https://{host}"
+        return f"{host.rstrip('/')}/auth/reset?token={token}"
+    return token
+
+
+async def send_password_reset_email(to: str, token: str) -> dict:
+    """Email a password-reset link to the requesting user.
+
+    Reuses the existing Resend/local-stub ``send_email`` path — no new email
+    dependency. The token is single-use and short-lived (see auth service).
+    """
+    reset_url = password_reset_url(token)
+    subject = "Reset your LeadPulse password"
+    if reset_url == token:
+        body = (
+            f"Use this one-time code to reset your LeadPulse password:\n\n"
+            f"{token}\n\n"
+            f"It expires in {settings.password_reset_token_ttl_minutes} minutes. "
+            f"If you didn't request this, you can safely ignore this email."
+        )
+    else:
+        body = (
+            f"Click the link below to reset your LeadPulse password. It is valid "
+            f"for {settings.password_reset_token_ttl_minutes} minutes.\n\n"
+            f"{reset_url}\n\n"
+            f"If you didn't request this, you can safely ignore this email."
+        )
+    return await send_email(to, subject, body)
+
+
 def _lead_summary(state: dict) -> tuple[str, str]:
     lead_name = state.get("lead_name") or "A lead"
     company = state.get("company_name") or ""

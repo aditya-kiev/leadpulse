@@ -23,7 +23,7 @@ def create_meeting_booking_node(model: ChatGoogleGenerativeAI):
         slot_labels = "\n".join(s["label"] for s in slots[:9])
 
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().MEETING_BOOKING_SYSTEM_PROMPT.format(
+            SystemMessage(content=get_prompts(state.get("vertical")).MEETING_BOOKING_SYSTEM_PROMPT.format(
                 lead_name=state.get("lead_name", "there"),
                 company_name=state.get("company_name", "your company"),
                 lead_status=state.get("lead_status", "new"),

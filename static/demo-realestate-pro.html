@@ -527,13 +527,18 @@
   let lastFailedText = null;
   let typingTimeout = null;
 
+  function escapeHtml(value) {
+    return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
   function renderRecord(record) {
     const body = document.getElementById("recordBody");
     body.innerHTML = "";
 
     const statusRow = document.createElement("div");
     statusRow.className = "field-row";
-    const status = (record.lead_status || "cold").toLowerCase();
+    const status = escapeHtml((record.lead_status || "cold").toLowerCase());
     statusRow.innerHTML = `
       <span class="field-label">Status</span>
       <span class="status-badge ${status}">${status}</span>
@@ -548,7 +553,7 @@
       row.className = "field-row" + (changed ? " flash" : "");
       row.innerHTML = `
         <span class="field-label">${f.label}</span>
-        <span class="field-value ${raw == null ? "empty" : ""}">${display}</span>
+        <span class="field-value ${raw == null ? "empty" : ""}">${escapeHtml(display)}</span>
       `;
       body.appendChild(row);
     });

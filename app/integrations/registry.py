@@ -39,13 +39,30 @@ async def resolve_integration(
 
 
 async def _resolve(session: AsyncSession, tenant_id: UUID) -> CRMIntegration:
+    # Exclude the "gemini" credentials row — it stores the per-tenant API key,
+    # not a CRM connector. Every onboarded tenant has one, so including it
+    # makes scalar_one_or_none() raise MultipleResultsFound the moment the
+    # tenant also connects a real CRM (fub/kvcore/ams360/webhook).
     result = await session.execute(
-        select(CRMConfigModel).where(
+        select(CRMConfigModel)
+        .where(
             CRMConfigModel.organization_id == tenant_id,
             CRMConfigModel.is_active == True,
+            CRMConfigModel.integration_type != "gemini",
         )
+        .order_by(CRMConfigModel.created_at.desc())
     )
-    row: CRMConfigModel | None = result.scalar_one_or_none()
+    rows: list[CRMConfigModel] = list(result.scalars().all())
+
+    if len(rows) > 1:
+        logger.warning(
+            "tenant=%s has %d active CRM rows (%s) — using most recent; "
+            "duplicate rows should be cleaned up",
+            tenant_id,
+            len(rows),
+            [r.integration_type for r in rows],
+        )
+    row: CRMConfigModel | None = rows[0] if rows else None
 
     if row is None:
         logger.debug("no CRM config for tenant=%s — using webhook fallback", tenant_id)

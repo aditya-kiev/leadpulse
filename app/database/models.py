@@ -24,6 +24,10 @@ class Organization(Base):
     domain_verification_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
     widget_key: Mapped[str | None] = mapped_column(String(128), unique=True, nullable=True, index=True)
     notification_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    billing_status: Mapped[str] = mapped_column(String(20), nullable=False, default="trialing")
+    billing_provider_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    last_payment_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_payment_due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     tls_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -47,6 +51,17 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     organization = relationship("Organization", back_populates="users")
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class CRMConfig(Base):

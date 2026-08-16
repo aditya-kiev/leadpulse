@@ -411,3 +411,147 @@ class TestTenantIsolation:
         assert result is not None
         assert result.tenant_id == org_id
         assert result.session_id == session_id
+
+
+# --- REAL Postgres register tests (Task 3) ---
+
+import os
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+TEST_DATABASE_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test",
+)
+
+
+@pytest.fixture
+async def pg_session_factory():
+    engine = create_async_engine(TEST_DATABASE_URL)
+    try:
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        yield factory
+    finally:
+        await engine.dispose()
+
+
+class TestRegisterRealDB:
+    async def _cleanup(self, factory, *, user_ids=None, org_ids=None):
+        from app.database.models import Organization, User
+
+        async with factory() as session:
+            for uid in user_ids or []:
+                await session.execute(delete(User).where(User.id == uid))
+            for oid in org_ids or []:
+                await session.execute(delete(Organization).where(Organization.id == oid))
+            await session.commit()
+
+    @pytest.mark.asyncio
+    async def test_register_creates_organization_and_links_user(self, client, pg_session_factory):
+        """REAL Postgres: register with organization_name must create an
+        Organization row, link the user to it, and return its id.
+
+        Before the fix, RegisterOut.organization_id was always None and no
+        organization row was ever created — the dashboard had a user with no
+        tenant."""
+        from app.database.models import Organization, User
+
+        user_id = org_id = None
+        email = f"reg-{uuid4().hex[:8]}@test.local"
+        org_name = f"Register Org {uuid4().hex[:6]}"
+        try:
+            with patch("app.config.settings.settings.auth_enabled", True):
+                with patch("app.database.session.async_session_factory", pg_session_factory):
+                    resp = await client.post("/auth/register", json={
+                        "email": email,
+                        "password": "secure-password-123",
+                        "display_name": "Reg User",
+                        "organization_name": org_name,
+                    })
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["email"] == email
+            assert data["role"] == "org_admin"
+            assert data["organization_id"], "register must return the created organization id"
+
+            org_id = data["organization_id"]
+            user_id = data["user_id"]
+
+            async with pg_session_factory() as session:
+                org = (await session.execute(
+                    select(Organization).where(Organization.id == org_id)
+                )).scalar_one_or_none()
+                assert org is not None, "an Organization row must exist in Postgres"
+                assert org.name == org_name
+                assert org.slug == org_name.lower().replace(" ", "-")
+                assert org.billing_status == "trialing"
+
+                user = (await session.execute(
+                    select(User).where(User.id == user_id)
+                )).scalar_one()
+                assert str(user.organization_id) == org_id, "user must be linked to the org"
+                assert user.role == "org_admin"
+        finally:
+            await self._cleanup(pg_session_factory, user_ids=[user_id], org_ids=[org_id])
+
+    @pytest.mark.asyncio
+    async def test_register_without_org_name_returns_none_org(self, client, pg_session_factory):
+        """Backward compat: register with no organization_name still works and
+        returns organization_id=None (no org created)."""
+        from app.database.models import User
+
+        user_id = None
+        email = f"reg-norg-{uuid4().hex[:8]}@test.local"
+        try:
+            with patch("app.config.settings.settings.auth_enabled", True):
+                with patch("app.database.session.async_session_factory", pg_session_factory):
+                    resp = await client.post("/auth/register", json={
+                        "email": email,
+                        "password": "secure-password-123",
+                        "display_name": "No Org User",
+                    })
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["organization_id"] is None
+            user_id = data["user_id"]
+        finally:
+            await self._cleanup(pg_session_factory, user_ids=[user_id])
+
+    @pytest.mark.asyncio
+    async def test_register_duplicate_org_name_gets_unique_slug(self, client, pg_session_factory):
+        """Two registrations with the same org name must produce distinct slugs
+        (the second gets a -2 suffix), never a unique-constraint crash."""
+        from app.database.models import Organization, User
+
+        user_ids = []
+        org_ids = []
+        email1 = f"reg-dup1-{uuid4().hex[:8]}@test.local"
+        email2 = f"reg-dup2-{uuid4().hex[:8]}@test.local"
+        org_name = f"Dup Org {uuid4().hex[:6]}"
+        try:
+            with patch("app.config.settings.settings.auth_enabled", True):
+                with patch("app.database.session.async_session_factory", pg_session_factory):
+                    r1 = await client.post("/auth/register", json={
+                        "email": email1, "password": "p12345678", "display_name": "A",
+                        "organization_name": org_name,
+                    })
+                    r2 = await client.post("/auth/register", json={
+                        "email": email2, "password": "p12345678", "display_name": "B",
+                        "organization_name": org_name,
+                    })
+            assert r1.status_code == 200, r1.text
+            assert r2.status_code == 200, r2.text
+            org_ids = [r1.json()["organization_id"], r2.json()["organization_id"]]
+            user_ids = [r1.json()["user_id"], r2.json()["user_id"]]
+            assert len(set(org_ids)) == 2, "two registrations must yield two distinct orgs"
+
+            async with pg_session_factory() as session:
+                slugs = [o.slug for o in (await session.execute(
+                    select(Organization).where(Organization.id.in_(org_ids))
+                )).scalars().all()]
+            base = org_name.lower().replace(" ", "-")
+            assert slugs[0] == base
+            assert slugs[1] == f"{base}-2"
+        finally:
+            await self._cleanup(pg_session_factory, user_ids=user_ids, org_ids=org_ids)
+

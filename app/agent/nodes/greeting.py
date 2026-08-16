@@ -58,10 +58,13 @@ def create_greeting_node(model: ChatGoogleGenerativeAI):
             }.items() if v
         }
 
+        business_name = state.get("business_name") or _settings.business_name
+        vertical = state.get("vertical") or _settings.vertical
+
         logger.info("NODE greeting: LLM call 1/1 (combined intent + generation)")
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().COMBINED_GREETING_PROMPT.format(
-                company_name=_settings.business_name,
+            SystemMessage(content=get_prompts(vertical).COMBINED_GREETING_PROMPT.format(
+                company_name=business_name,
                 lead_status=state.get("lead_status", "new"),
                 known_info=str(known_info) if known_info else "none yet",
                 input=user_message,
@@ -71,7 +74,7 @@ def create_greeting_node(model: ChatGoogleGenerativeAI):
         text = safe_text(response.content)
         logger.info("NODE greeting: response=%s", log_fingerprint(text))
 
-        lead_intent, lead_type, reply = _parse_combined_response(text, _settings.vertical)
+        lead_intent, lead_type, reply = _parse_combined_response(text, vertical)
 
         logger.info("NODE greeting EXIT: session=%s lead_intent=%s lead_type=%s",
                     state.get("session_id"), lead_intent, lead_type)

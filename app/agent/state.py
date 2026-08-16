@@ -11,6 +11,9 @@ class AgentState(TypedDict):
     channel: str
     tenant_id: str | None
 
+    vertical: str | None
+    business_name: str | None
+
     lead_name: str | None
     company_name: str | None
     industry: str | None
@@ -45,6 +48,8 @@ def get_initial_state(session_id: str, channel: str = "web", tenant_id: str | No
         "session_id": session_id,
         "channel": channel,
         "tenant_id": tenant_id,
+        "vertical": None,
+        "business_name": None,
         "lead_name": None,
         "company_name": None,
         "industry": None,

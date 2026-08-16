@@ -154,8 +154,9 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
         else:
             prompt_kwargs["missing_fields"] = [first_missing]
 
+        vertical = state.get("vertical") or _settings.vertical
         response = await model.ainvoke([
-            SystemMessage(content=get_prompts().COMBINED_INFO_COLLECTION_PROMPT.format(**prompt_kwargs)),
+            SystemMessage(content=get_prompts(vertical).COMBINED_INFO_COLLECTION_PROMPT.format(**prompt_kwargs)),
             HumanMessage(content=user_message),
         ])
         text = safe_text(response.content)
