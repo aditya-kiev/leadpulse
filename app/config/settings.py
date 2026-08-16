@@ -60,6 +60,12 @@ class Settings(BaseSettings):
     jwt_refresh_token_ttl_days: int = 30
     password_reset_token_ttl_minutes: int = 30
 
+    # Rate limits for the public auth endpoints. NOTE: "rpm" here means
+    # "requests per limiter window", NOT requests per minute (unlike the
+    # per-minute limits above). Forgot-password is keyed by the target email
+    # and uses a 1-hour window to stop mail-bombing.
+    password_reset_rpm_limit: int = 3
+
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"
 

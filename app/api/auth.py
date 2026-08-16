@@ -21,7 +21,11 @@ from app.services.auth import (
     verify_password,
     verify_password_reset_token,
 )
-from app.api.deps import get_current_user, require_role
+from app.api.deps import (
+    get_current_user,
+    rate_limit_password_reset,
+    require_role,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -146,7 +150,7 @@ async def register(payload: RegisterIn, session: AsyncSession = Depends(get_sess
     )
 
 
-@router.post("/forgot-password", response_model=ForgotPasswordOut)
+@router.post("/forgot-password", response_model=ForgotPasswordOut, dependencies=[Depends(rate_limit_password_reset)])
 async def forgot_password(payload: ForgotPasswordIn, session: AsyncSession = Depends(get_session)):
     """Request a password-reset email.
 

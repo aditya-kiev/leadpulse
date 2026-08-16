@@ -79,6 +79,70 @@ async def rate_limit_webhook(request: Request) -> None:
         )
 
 
+# In-memory fallbacks for the public auth endpoints (per-process only).
+# Kept separate from _webhook_inmem so the two limiters never share state.
+_pwreset_inmem: dict[str, deque[float]] = defaultdict(deque)
+
+
+def reset_password_reset_rate_limits() -> None:
+    """Clear in-memory forgot-password rate-limit state (test helper)."""
+    _pwreset_inmem.clear()
+
+
+def _inmem_pwreset_allowed(key: str, limit: int, window: float = 3600.0) -> bool:
+    now = time.monotonic()
+    dq = _pwreset_inmem[key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
+async def rate_limit_password_reset(request: Request) -> None:
+    """Per-target-email rate limiting for /auth/forgot-password.
+
+    Keyed by the requested email (lowercased, trimmed) rather than the caller
+    IP: the real abuse this endpoint faces is mail-bombing a single inbox, not
+    per-source volume, so the budget is scoped to the recipient. Uses the shared
+    Redis sliding-window limiter with a 1-hour window (password_reset_rpm_limit),
+    falling back to an in-memory sliding window when Redis is unavailable so the
+    endpoint is never fully unguarded. Runs before the email-exists lookup and
+    returns the same 429 regardless of account existence (no enumeration leak).
+    """
+    rpm = settings.password_reset_rpm_limit
+    if rpm <= 0:
+        return
+    email = ""
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            email = (body.get("email") or "").strip().lower()
+    except Exception:
+        email = ""
+    if not email:
+        email = request.client.host if request.client else "unknown"
+
+    scope_key = f"ratelimit:pwreset:{email}"
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=scope_key)
+    wait = await limiter.acquire(rpm, window=3600)
+    if wait == -1:
+        if not _inmem_pwreset_allowed(f"{scope_key}:inmem", rpm):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": "3600"},
+            )
+        return
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
+
 async def _extract_session_id(request: Request) -> str | None:
     """Extract session_id from request JSON body or path params."""
     try:
