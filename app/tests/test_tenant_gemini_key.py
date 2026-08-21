@@ -116,9 +116,9 @@ async def test_get_graph_uses_tenant_key_and_caches_per_tenant(pg_session_factor
 
         original_build = graph_mod.build_graph
 
-        def spying_build(api_key=None):
+        def spying_build(api_key=None, tenant_id=None):
             build_api_keys.append(api_key)
-            return original_build(api_key=api_key)
+            return original_build(api_key=api_key, tenant_id=tenant_id)
 
         with patch.object(graph_mod, "build_graph", side_effect=spying_build), \
              patch("app.agent.graph._tenant_graph_keys", {}), \
@@ -176,7 +176,7 @@ async def test_end_to_end_each_org_uses_own_gemini_key(pg_session_factory):
             return mock_model
 
         with patch.object(graph_mod, "ChatGoogleGenerativeAI", side_effect=recording_model), \
-             patch.object(graph_mod, "RetryingGeminiModel", side_effect=lambda model: model), \
+             patch.object(graph_mod, "RetryingGeminiModel", side_effect=lambda model, **kwargs: model), \
              patch.object(graph_mod, "_agent_graph", None), \
              patch.object(graph_mod, "_tenant_graphs", {}), \
              patch.object(graph_mod, "_tenant_graph_keys", {}), \

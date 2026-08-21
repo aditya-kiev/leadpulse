@@ -17,39 +17,57 @@ gemini_call_counter: ContextVar[int] = ContextVar("gemini_call_counter", default
 # Override RPM limit for demo-token-authenticated requests (set per-request)
 demo_rpm_limit: ContextVar[int] = ContextVar("demo_rpm_limit", default=0)
 
-# In-memory fallback rate limiter (used when Redis is unavailable)
+# In-memory fallback rate limiter (used when Redis is unavailable).
+# Scoped per tenant so one tenant's burst never consumes another tenant's
+# budget when the deployment is running without Redis.
 _sliding_lock: asyncio.Lock | None = None
-_sliding_timestamps: deque[float] | None = None
-_redis_limiter: Any = None
+_sliding_timestamps: dict[str, deque[float]] = {}
+_redis_limiters: dict[str, Any] = {}
 
 
-def _get_fallback_limiter() -> tuple[asyncio.Lock, deque[float]]:
-    global _sliding_lock, _sliding_timestamps
+def _rate_limit_scope(tenant_id: UUID | str | None) -> str:
+    """Redis key prefix / in-memory scope for a Gemini caller.
+
+    Every tenant gets its own sliding-window budget keyed by its tenant id;
+    traffic without a tenant context (platform key, legacy single-tenant)
+    shares the default ``ratelimit:gemini`` scope.
+    """
+    if tenant_id is None:
+        return "ratelimit:gemini"
+    return f"ratelimit:gemini:{tenant_id}"
+
+
+def _get_fallback_limiter(scope: str) -> tuple[asyncio.Lock, deque[float]]:
+    global _sliding_lock
     if _sliding_lock is None:
         _sliding_lock = asyncio.Lock()
-        _sliding_timestamps = deque()
-    return _sliding_lock, _sliding_timestamps
+    timestamps = _sliding_timestamps.setdefault(scope, deque())
+    return _sliding_lock, timestamps
 
 
-async def _acquire_rate_limit() -> None:
+async def _acquire_rate_limit(tenant_id: UUID | str | None = None) -> None:
     """Wait until a slot opens in the 60-second sliding window.
 
-    Uses Redis-backed sliding window when Redis is available, falls back
-    to the per-process in-memory deque.
+    Uses a Redis-backed sliding window scoped per tenant when Redis is
+    available (so tenant A exhausting its budget never blocks tenant B),
+    falling back to the per-process in-memory deque scoped per tenant as well.
     """
     override = demo_rpm_limit.get()
     rpm_limit = int(override if override > 0 else settings.gemini_rpm_limit)
     if rpm_limit <= 0:
         return
 
-    # Try Redis-backed limiter first
-    global _redis_limiter
-    if _redis_limiter is None and settings.redis_url:
-        from app.services.redis import RedisSlidingWindowRateLimiter
-        _redis_limiter = RedisSlidingWindowRateLimiter()
+    scope = _rate_limit_scope(tenant_id)
 
-    if _redis_limiter is not None:
-        wait = await _redis_limiter.acquire(rpm_limit)
+    # Try Redis-backed limiter first
+    limiter = _redis_limiters.get(scope)
+    if limiter is None and settings.redis_url:
+        from app.services.redis import RedisSlidingWindowRateLimiter
+        limiter = RedisSlidingWindowRateLimiter(key_prefix=scope)
+        _redis_limiters[scope] = limiter
+
+    if limiter is not None:
+        wait = await limiter.acquire(rpm_limit)
         if wait == 0:
             return
         if wait > 0:
@@ -58,7 +76,7 @@ async def _acquire_rate_limit() -> None:
         # wait == -1 means Redis unavailable — fall through
 
     # In-memory fallback
-    lock, timestamps = _get_fallback_limiter()
+    lock, timestamps = _get_fallback_limiter(scope)
     while True:
         async with lock:
             now = time.monotonic()
@@ -223,7 +241,7 @@ class RetryingGeminiModel:
         attempts = self.max_retries + 1
 
         for attempt in range(1, attempts + 1):
-            await _acquire_rate_limit()
+            await _acquire_rate_limit(self.tenant_id)
 
             try:
                 response = await self.model.ainvoke(*args, **kwargs)

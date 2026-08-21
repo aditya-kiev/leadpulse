@@ -191,7 +191,9 @@ def get_entry_point(state: AgentState) -> str:
     return "greeting"
 
 
-def build_graph(api_key: str | None = None) -> CompiledStateGraph:
+def build_graph(
+    api_key: str | None = None, tenant_id: UUID | None = None
+) -> CompiledStateGraph:
     logger.debug("building graph with model=%s", settings.gemini_model)
 
     model = ChatGoogleGenerativeAI(
@@ -200,7 +202,7 @@ def build_graph(api_key: str | None = None) -> CompiledStateGraph:
         api_key=api_key or settings.gemini_api_key,
         timeout=settings.gemini_timeout,
     )
-    model = RetryingGeminiModel(model)
+    model = RetryingGeminiModel(model, tenant_id=tenant_id)
 
     workflow = StateGraph(AgentState)
 
@@ -298,7 +300,7 @@ def get_graph(tenant_id: UUID | None = None, api_key: str | None = None) -> Comp
     global _agent_graph
     if tenant_id is None:
         if _agent_graph is None:
-            _agent_graph = build_graph(api_key=api_key)
+            _agent_graph = build_graph(api_key=api_key, tenant_id=None)
         return _agent_graph
 
     key = str(tenant_id)
@@ -306,7 +308,7 @@ def get_graph(tenant_id: UUID | None = None, api_key: str | None = None) -> Comp
     if key in _tenant_graphs and cached_key == api_key:
         return _tenant_graphs[key]
     logger.debug("building per-tenant graph for tenant=%s (has own key=%s)", tenant_id, bool(api_key))
-    graph = build_graph(api_key=api_key)
+    graph = build_graph(api_key=api_key, tenant_id=tenant_id)
     _tenant_graphs[key] = graph
     _tenant_graph_keys[key] = api_key
     return graph
