@@ -351,12 +351,16 @@ async def test_concurrent_cross_tenant_widget_conversations(client, pg_session_f
             "next_action": None,
         }
 
-        async def fire(widget_key: str, session_id: str) -> int:
-            with patch("app.database.session.async_session_factory", pg_session_factory), \
-                 patch("app.services.memory.async_session_factory", pg_session_factory), \
-                 patch("app.config.settings.settings.webhook_rpm_limit", 0), \
-                 patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:
-                mock_agent.return_value = canned
+        # Patch ONCE around the whole gather: concurrent per-task patch() calls
+        # on the same global target save/restore out of order and leak a stale
+        # AsyncMock into later tests.
+        with patch("app.database.session.async_session_factory", pg_session_factory), \
+             patch("app.services.memory.async_session_factory", pg_session_factory), \
+             patch("app.config.settings.settings.webhook_rpm_limit", 0), \
+             patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:
+            mock_agent.return_value = canned
+
+            async def fire(widget_key: str, session_id: str) -> int:
                 resp = await client.post(
                     "/webhook/message",
                     json={"session_id": session_id, "message": "I want to book a demo"},
@@ -364,10 +368,10 @@ async def test_concurrent_cross_tenant_widget_conversations(client, pg_session_f
                 )
                 return resp.status_code
 
-        async def fire_many(widget_key: str, sessions: list[str]) -> list[int]:
-            return await asyncio.gather(*(fire(widget_key, s) for s in sessions))
+            async def fire_many(widget_key: str, sessions: list[str]) -> list[int]:
+                return await asyncio.gather(*(fire(widget_key, s) for s in sessions))
 
-        grouped = await asyncio.gather(fire_many(wk_a, sessions_a), fire_many(wk_b, sessions_b))
+            grouped = await asyncio.gather(fire_many(wk_a, sessions_a), fire_many(wk_b, sessions_b))
         statuses = [s for group in grouped for s in group]
         assert all(s == 200 for s in statuses), f"non-200 responses: {statuses}"
 

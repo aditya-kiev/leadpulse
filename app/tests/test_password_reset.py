@@ -35,6 +35,34 @@ async def pg_session_factory():
         await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+async def _clean_pwreset_rate_limit_state():
+    """Isolate password-reset rate-limit state around every test.
+
+    The Redis sliding-window keys (``ratelimit:pwreset:*``, 1-hour TTL) and
+    the in-process fallback deques outlive a pytest run, so back-to-back full
+    suite runs accumulate forgot-password attempts for the shared fixture
+    emails until ``rate_limit_password_reset`` trips and unrelated tests fail
+    with 429.
+    """
+    import app.services.redis as redis_mod
+    from app.api.deps import reset_password_reset_rate_limits
+
+    prior = redis_mod._redis
+    reset_password_reset_rate_limits()
+    try:
+        r = await redis_mod.get_redis()
+        if r is not None:
+            keys = await r.keys("ratelimit:pwreset:*")
+            if keys:
+                await r.delete(*keys)
+    except Exception:
+        pass
+    yield
+    redis_mod._redis = prior
+    reset_password_reset_rate_limits()
+
+
 async def _seed_user(factory, *, email: str = None) -> dict:
     """Create a real user (org optional) and return ids for cleanup."""
     from app.database.models import User

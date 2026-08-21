@@ -23,6 +23,34 @@ async def client():
         yield ac
 
 
+@pytest.fixture(autouse=True)
+async def _clean_login_rate_limit_state():
+    """Isolate login rate-limit state around every test.
+
+    The Redis sliding-window keys (``ratelimit:login:*``, 15-minute TTL) and
+    the in-process fallback deques outlive a pytest run, so back-to-back full
+    suite runs accumulate login attempts for the shared ``admin@test.com``
+    fixture account until ``login_rate_limit`` trips and unrelated auth tests
+    start failing with 429.
+    """
+    import app.services.redis as redis_mod
+    from app.api.deps import reset_login_rate_limits
+
+    prior = redis_mod._redis
+    reset_login_rate_limits()
+    try:
+        r = await redis_mod.get_redis()
+        if r is not None:
+            keys = await r.keys("ratelimit:login:*")
+            if keys:
+                await r.delete(*keys)
+    except Exception:
+        pass
+    yield
+    redis_mod._redis = prior
+    reset_login_rate_limits()
+
+
 # --- Unit tests for auth service ---
 
 class TestAuthService:
