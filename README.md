@@ -141,6 +141,8 @@ pushes are enqueued for the `crm_worker` retry.
 |---|---|---|
 | `GEMINI_API_KEY` | `""` | Google Gemini API key (platform default; tenants may override) |
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Model name |
+| `GEMINI_RPM_LIMIT` | `10` | Per-tenant Gemini requests/minute (own-key tenants) |
+| `GEMINI_PLATFORM_FALLBACK_RPM_LIMIT` | `10` | Shared RPM budget for ALL tenants on the platform fallback key (they share one Google quota) |
 | `DATABASE_URL` | `postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent` | Postgres connection |
 | `REDIS_URL` | `None` | Optional Redis connection (session cache, rate limiting, push queue) |
 | `API_KEY` | `""` | Master key for webhook/server-to-server auth (required at startup) |

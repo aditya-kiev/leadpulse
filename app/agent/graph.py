@@ -202,7 +202,14 @@ def build_graph(
         api_key=api_key or settings.gemini_api_key,
         timeout=settings.gemini_timeout,
     )
-    model = RetryingGeminiModel(model, tenant_id=tenant_id)
+    # Whether this graph actually runs on the shared platform key. Tenants
+    # whose crm_configs row is missing/undecryptable resolve to
+    # settings.gemini_api_key — they all share ONE real Google quota, so
+    # their rate-limit traffic must pool into the shared fallback bucket.
+    using_platform_key = (api_key or settings.gemini_api_key) == settings.gemini_api_key
+    model = RetryingGeminiModel(
+        model, tenant_id=tenant_id, using_platform_key=using_platform_key
+    )
 
     workflow = StateGraph(AgentState)
 

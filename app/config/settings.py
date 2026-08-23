@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     gemini_temperature: float = 0.1
     gemini_timeout: float = 30.0
     gemini_rpm_limit: int = 10
+    # Shared RPM budget for ALL tenants running on the platform fallback
+    # Gemini key (no crm_configs key of their own, or undecryptable) — they
+    # share one real Google quota, so they must share one rate-limit bucket.
+    gemini_platform_fallback_rpm_limit: int = 10
 
     langchain_tracing_v2: bool = False
     langsmith_api_key: str = ""

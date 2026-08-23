@@ -37,6 +37,14 @@ def _rate_limit_scope(tenant_id: UUID | str | None) -> str:
     return f"ratelimit:gemini:{tenant_id}"
 
 
+# Tenants WITHOUT their own Gemini key silently fall back to
+# ``settings.gemini_api_key`` (resolve_tenant_gemini_key) — meaning many
+# tenants share ONE real Google quota while previously each got their own
+# private-looking rate-limit bucket. All such traffic is pooled here so the
+# limiter reflects the actual shared quota instead of multiplying it.
+_PLATFORM_FALLBACK_SCOPE = "ratelimit:gemini:platform_fallback"
+
+
 def _get_fallback_limiter(scope: str) -> tuple[asyncio.Lock, deque[float]]:
     global _sliding_lock
     if _sliding_lock is None:
@@ -45,19 +53,31 @@ def _get_fallback_limiter(scope: str) -> tuple[asyncio.Lock, deque[float]]:
     return _sliding_lock, timestamps
 
 
-async def _acquire_rate_limit(tenant_id: UUID | str | None = None) -> None:
+async def _acquire_rate_limit(
+    tenant_id: UUID | str | None = None,
+    using_platform_key: bool = False,
+) -> None:
     """Wait until a slot opens in the 60-second sliding window.
 
     Uses a Redis-backed sliding window scoped per tenant when Redis is
     available (so tenant A exhausting its budget never blocks tenant B),
     falling back to the per-process in-memory deque scoped per tenant as well.
+
+    ``using_platform_key=True`` (tenant traffic actually running on the
+    shared platform fallback key) pools the caller into ONE shared bucket
+    with its own budget (gemini_platform_fallback_rpm_limit), because those
+    tenants all draw on a single real Google quota. Tenants with their own
+    key keep fully isolated per-tenant buckets.
     """
     override = demo_rpm_limit.get()
-    rpm_limit = int(override if override > 0 else settings.gemini_rpm_limit)
+    if using_platform_key and tenant_id is not None:
+        rpm_limit = int(override if override > 0 else settings.gemini_platform_fallback_rpm_limit)
+        scope = _PLATFORM_FALLBACK_SCOPE
+    else:
+        rpm_limit = int(override if override > 0 else settings.gemini_rpm_limit)
+        scope = _rate_limit_scope(tenant_id)
     if rpm_limit <= 0:
         return
-
-    scope = _rate_limit_scope(tenant_id)
 
     # Try Redis-backed limiter first
     limiter = _redis_limiters.get(scope)
@@ -229,6 +249,7 @@ class RetryingGeminiModel:
     initial_backoff_seconds: float = 0.5
     tenant_id: UUID | None = None
     session_id: str | None = None
+    using_platform_key: bool = False
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.model, name)
@@ -241,7 +262,9 @@ class RetryingGeminiModel:
         attempts = self.max_retries + 1
 
         for attempt in range(1, attempts + 1):
-            await _acquire_rate_limit(self.tenant_id)
+            await _acquire_rate_limit(
+                self.tenant_id, using_platform_key=self.using_platform_key
+            )
 
             try:
                 response = await self.model.ainvoke(*args, **kwargs)
