@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     # (email, IP) pair with a 15-minute window to stop brute-forcing.
     password_reset_rpm_limit: int = 3
     login_rpm_limit: int = 10
+    # /auth/register — spam-account prevention, keyed by IP, 1-hour window.
+    register_rpm_limit: int = 5
+    # /auth/reset-password — the TOKEN-CONSUMPTION endpoint (forgot-password
+    # above only requests the token), so an attacker holding a stolen/guessed
+    # token must not get unlimited attempts. Keyed by IP, 1-hour window.
+    reset_password_rpm_limit: int = 10
+    # /auth/refresh — keyed by the verified refresh-token subject when the
+    # token decodes (falls back to IP for garbage tokens), 1-hour window.
+    refresh_rpm_limit: int = 30
+    # /demo/token — public, unauthenticated token minting, keyed by IP,
+    # 1-hour window (shared across workers via Redis; in-memory fallback).
+    demo_token_mint_rpm_limit: int = 20
 
     # Default tenant for single-tenant (legacy) mode
     default_tenant_name: str = "Default Organization"

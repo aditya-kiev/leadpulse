@@ -126,13 +126,13 @@ pushes are enqueued for the `crm_worker` retry.
 
 ### Auth & Password Reset
 
-- `POST /auth/register` — create org + org_admin (when `organization_name` given).
+- `POST /auth/register` — create org + org_admin (when `organization_name` given). Rate limited per IP.
 - `POST /auth/login` — rate limited per `(email, IP)` pair.
-- `POST /auth/refresh` — issue a new access token.
+- `POST /auth/refresh` — issue a new access token. Rate limited per verified token subject (IP fallback).
 - `POST /auth/forgot-password` — always returns 200 (no account enumeration);
   emails a single-use, expiring reset link when the user exists. Rate limited
   per target email.
-- `POST /auth/reset-password` — consume the token, set a new password.
+- `POST /auth/reset-password` — consume the token, set a new password. Rate limited per IP.
 - `GET /auth/me` — current user profile.
 
 ## Environment Variables
@@ -178,6 +178,10 @@ pushes are enqueued for the `crm_worker` retry.
 | `AMS360_API_SECRET` | `""` | AMS360 secret |
 | `SENTRY_DSN` | `""` | Sentry DSN (production) |
 | `DEBUG` | `false` | Enable debug router |
+| `REGISTER_RPM_LIMIT` | `5` | `/auth/register` per-IP attempts per hour (spam-account prevention) |
+| `RESET_PASSWORD_RPM_LIMIT` | `10` | `/auth/reset-password` (token consumption) per-IP attempts per hour |
+| `REFRESH_RPM_LIMIT` | `30` | `/auth/refresh` per verified token subject (IP fallback) per hour |
+| `DEMO_TOKEN_MINT_RPM_LIMIT` | `20` | `/demo/token` mints per IP per hour |
 
 ## Graph Structure (LangGraph)
 

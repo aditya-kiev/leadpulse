@@ -1,8 +1,10 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis.aioredis
 import pytest
 from httpx import AsyncClient, ASGITransport
 
+import app.services.redis as redis_mod
 from app.main import app
 
 
@@ -11,6 +13,16 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture
+async def fake_redis():
+    fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    prev = redis_mod._redis
+    redis_mod._redis = fake
+    with patch("app.services.redis.settings.redis_url", "redis://fake:6379"):
+        yield fake
+    redis_mod._redis = prev
 
 
 @pytest.mark.asyncio
@@ -162,13 +174,14 @@ async def test_demo_token_rejected_when_expired(client):
 
 
 @pytest.mark.asyncio
-async def test_demo_token_rate_limited_per_ip(client):
+async def test_demo_token_rate_limited_per_ip(client, fake_redis):
     """POST /demo/token should return 429 after exceeding the per-IP rate limit."""
-    from app.api.demo import _rate_limited
-    with patch("app.config.settings.settings.demo_token_secret", "test-secret-32-chars-long!!"):
-        with patch("app.api.demo._rate_limited", new_callable=AsyncMock, return_value=True):
-            response = await client.post("/demo/token")
-            assert response.status_code == 429
+    with patch("app.config.settings.settings.demo_token_secret", "test-secret-32-chars-long!!"), \
+         patch("app.config.settings.settings.demo_token_mint_rpm_limit", 1):
+        assert (await client.post("/demo/token")).status_code == 200
+        response = await client.post("/demo/token")
+        assert response.status_code == 429
+        assert "Retry-After" in response.headers
 
 
 @pytest.mark.asyncio

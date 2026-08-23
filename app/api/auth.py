@@ -25,6 +25,9 @@ from app.api.deps import (
     get_current_user,
     rate_limit_login,
     rate_limit_password_reset,
+    rate_limit_refresh,
+    rate_limit_register,
+    rate_limit_reset_password,
     require_role,
 )
 
@@ -116,7 +119,7 @@ async def login(payload: LoginIn, session: AsyncSession = Depends(get_session)):
     )
 
 
-@router.post("/register", response_model=RegisterOut)
+@router.post("/register", response_model=RegisterOut, dependencies=[Depends(rate_limit_register)])
 async def register(payload: RegisterIn, session: AsyncSession = Depends(get_session)):
     existing = await get_user_by_email(session, payload.email)
     if existing:
@@ -182,7 +185,7 @@ async def forgot_password(payload: ForgotPasswordIn, session: AsyncSession = Dep
     return ForgotPasswordOut()
 
 
-@router.post("/reset-password", response_model=ResetPasswordOut)
+@router.post("/reset-password", response_model=ResetPasswordOut, dependencies=[Depends(rate_limit_reset_password)])
 async def reset_password(payload: ResetPasswordIn, session: AsyncSession = Depends(get_session)):
     """Reset a password using a single-use token.
 
@@ -198,7 +201,7 @@ async def reset_password(payload: ResetPasswordIn, session: AsyncSession = Depen
     return ResetPasswordOut()
 
 
-@router.post("/refresh", response_model=RefreshOut)
+@router.post("/refresh", response_model=RefreshOut, dependencies=[Depends(rate_limit_refresh)])
 async def refresh(payload: RefreshIn, session: AsyncSession = Depends(get_session)):
     token_data = decode_token(payload.refresh_token)
     if not token_data or token_data.get("type") != "refresh":

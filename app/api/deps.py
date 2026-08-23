@@ -202,6 +202,187 @@ async def rate_limit_login(request: Request) -> None:
         )
 
 
+# ── Shared limiter plumbing for the remaining public endpoints ───────────
+# Same shape as the login/forgot-password limiters above: Redis sliding
+# window (shared across workers) with a per-process in-memory fallback so a
+# Redis outage never leaves an endpoint fully unguarded.
+
+_register_inmem: dict[str, deque[float]] = defaultdict(deque)
+_pwconsume_inmem: dict[str, deque[float]] = defaultdict(deque)
+_refresh_inmem: dict[str, deque[float]] = defaultdict(deque)
+_demomint_inmem: dict[str, deque[float]] = defaultdict(deque)
+
+
+def reset_register_rate_limits() -> None:
+    """Clear in-memory register rate-limit state (test helper)."""
+    _register_inmem.clear()
+
+
+def reset_reset_password_rate_limits() -> None:
+    """Clear in-memory reset-password rate-limit state (test helper)."""
+    _pwconsume_inmem.clear()
+
+
+def reset_refresh_rate_limits() -> None:
+    """Clear in-memory refresh rate-limit state (test helper)."""
+    _refresh_inmem.clear()
+
+
+def reset_demo_mint_rate_limits() -> None:
+    """Clear in-memory demo-token mint rate-limit state (test helper)."""
+    _demomint_inmem.clear()
+
+
+def _inmem_sliding_allowed(store: dict[str, deque[float]], key: str, limit: int, window: float) -> bool:
+    now = time.monotonic()
+    dq = store[key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= limit:
+        return False
+    dq.append(now)
+    return True
+
+
+async def _enforce_ip_window_limit(
+    request: Request,
+    *,
+    scope: str,
+    rpm: int,
+    window: int,
+    store: dict[str, deque[float]],
+    retry_after: int,
+) -> None:
+    """Apply one sliding-window limit keyed by client IP; 429 when exceeded."""
+    ip = request.client.host if request.client else "unknown"
+    scope_key = f"{scope}:{ip}"
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=scope_key)
+    wait = await limiter.acquire(rpm, window=window)
+    if wait == -1:
+        if not _inmem_sliding_allowed(store, f"{scope_key}:inmem", rpm, float(window)):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": str(retry_after)},
+            )
+        return
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
+
+async def rate_limit_register(request: Request) -> None:
+    """Per-IP rate limiting for /auth/register (spam-account prevention).
+
+    Generous by design — this guards against scripted account farming, not
+    credential brute force. Uses the shared Redis sliding-window limiter with
+    a 1-hour window (register_rpm_limit), falling back to a per-process
+    in-memory window when Redis is unavailable.
+    """
+    rpm = settings.register_rpm_limit
+    if rpm <= 0:
+        return
+    await _enforce_ip_window_limit(
+        request,
+        scope="ratelimit:register",
+        rpm=rpm,
+        window=3600,
+        store=_register_inmem,
+        retry_after=3600,
+    )
+
+
+async def rate_limit_reset_password(request: Request) -> None:
+    """Per-IP rate limiting for /auth/reset-password.
+
+    This is the TOKEN-CONSUMPTION endpoint (/auth/forgot-password only
+    requests the token and is limited separately), so an attacker with a
+    stolen or guessed single-use token must not get unlimited attempts to
+    redeem it before the token TTL expires. Keyed by IP with a 1-hour window
+    (reset_password_rpm_limit), same Redis + in-memory-fallback pattern.
+    """
+    rpm = settings.reset_password_rpm_limit
+    if rpm <= 0:
+        return
+    await _enforce_ip_window_limit(
+        request,
+        scope="ratelimit:pwconsume",
+        rpm=rpm,
+        window=3600,
+        store=_pwconsume_inmem,
+        retry_after=3600,
+    )
+
+
+async def rate_limit_refresh(request: Request) -> None:
+    """Rate limiting for /auth/refresh.
+
+    Keyed by the refresh token's VERIFIED subject when the body carries a
+    signature-valid refresh token (decode_token rejects forged tokens, so the
+    subject is trustworthy): this scopes the budget to the account being
+    refreshed, so hammering one stolen refresh token from many IPs still hits
+    one bucket, and colleagues behind one NAT never exhaust each other.
+    Garbage/undecodable tokens fall back to the raw client IP. Moderate
+    1-hour window (refresh_rpm_limit), same Redis + in-memory fallback.
+    """
+    rpm = settings.refresh_rpm_limit
+    if rpm <= 0:
+        return
+    subject: str | None = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            payload = decode_token(body.get("refresh_token") or "")
+            if payload is not None and payload.get("type") == "refresh" and payload.get("sub"):
+                subject = str(payload["sub"])
+    except Exception:
+        subject = None
+
+    ip = request.client.host if request.client else "unknown"
+    scope_key = f"ratelimit:refresh:{subject if subject else ip}"
+    limiter = RedisSlidingWindowRateLimiter(key_prefix=scope_key)
+    wait = await limiter.acquire(rpm, window=3600)
+    if wait == -1:
+        if not _inmem_sliding_allowed(_refresh_inmem, f"{scope_key}:inmem", rpm, 3600.0):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests. Please slow down.",
+                headers={"Retry-After": "3600"},
+            )
+        return
+    if wait > 0:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Please slow down.",
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+
+
+async def rate_limit_demo_token(request: Request) -> None:
+    """Per-IP rate limiting for /demo/token (public, unauthenticated).
+
+    Allows real demo usage but stops unlimited demo-token minting. Replaces
+    the previous per-process dict in app/api/demo.py with the shared Redis
+    sliding-window limiter so the budget is enforced across workers, keeping
+    the same 20/hour default (demo_token_mint_rpm_limit) and in-memory
+    fallback semantics.
+    """
+    rpm = settings.demo_token_mint_rpm_limit
+    if rpm <= 0:
+        return
+    await _enforce_ip_window_limit(
+        request,
+        scope="ratelimit:demomint",
+        rpm=rpm,
+        window=3600,
+        store=_demomint_inmem,
+        retry_after=3600,
+    )
+
+
 async def _extract_session_id(request: Request) -> str | None:
     """Extract session_id from request JSON body or path params."""
     try:

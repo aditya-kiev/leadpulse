@@ -1,3 +1,4 @@
+import contextlib
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,6 +36,26 @@ def mock_db_session():
 def mock_settings_auth_disabled():
     """By default, run tests with auth_enabled=False for backward compat."""
     with patch("app.config.settings.settings.auth_enabled", False):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_new_route_rate_limits_disabled():
+    """Zero the newer route rate limits by default so pre-existing tests
+    that POST /auth/register or /demo/token many times from one IP are never
+    throttled. Tests exercising a limiter opt in by patching the specific
+    setting inside their own context."""
+    limits = (
+        "register_rpm_limit",
+        "reset_password_rpm_limit",
+        "refresh_rpm_limit",
+        "demo_token_mint_rpm_limit",
+    )
+    with contextlib.ExitStack() as stack:
+        for name in limits:
+            stack.enter_context(
+                patch(f"app.config.settings.settings.{name}", 0)
+            )
         yield
 
 
