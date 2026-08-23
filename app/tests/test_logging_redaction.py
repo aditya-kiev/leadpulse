@@ -41,6 +41,45 @@ class TestRedact:
         msg = "meeting booked at 2026-08-11T10:00:00 for lead_status=hot"
         assert redact(msg) == msg
 
+    @pytest.mark.parametrize("env_assignment", [
+        "GEMINI_API_KEY=AIzaSyD-1234567890abcdef",
+        "JWT_SECRET_KEY=super-secret-jwt-signing-key",
+        "STRIPE_WEBHOOK_SECRET=whsec_1234567890abcdef",
+        "DEMO_TOKEN_SECRET=test-demo-token-secret-32-chars",
+        "CRM_ENCRYPTION_KEY=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=",
+    ])
+    def test_snake_case_suffix_secret_names_redacted(self, env_assignment):
+        """The real settings env-var names: keyword is a SUFFIX of the
+        identifier, which the old r"\\b(keyword)\\b" pattern never matched."""
+        out = redact(env_assignment)
+        assert out == "[REDACTED]"
+        _, value = env_assignment.split("=", 1)
+        assert value not in out
+
+    def test_lowercase_snake_case_identifier_redacted(self):
+        out = redact("stripe_webhook_secret=whsec_abcdef123456")
+        assert out == "[REDACTED]"
+
+    def test_dict_repr_single_quotes_redacted(self):
+        out = redact("{'api_key': 'sk-live-hiddenvalue'}")
+        assert "sk-live-hiddenvalue" not in out
+        assert "[REDACTED]" in out
+
+    def test_json_repr_double_quotes_redacted(self):
+        out = redact('{"JWT_SECRET_KEY": "leaked-signing-key"}')
+        assert "leaked-signing-key" not in out
+        assert "[REDACTED]" in out
+
+    def test_dict_repr_inside_larger_log_line(self):
+        msg = "config loaded {'stripe_webhook_secret': 'whsec_hidden1'} ok"
+        out = redact(msg)
+        assert "whsec_hidden1" not in out
+        assert "[REDACTED]" in out
+        assert "config loaded" in out and "ok" in out
+
+    def test_existing_working_case_not_regressed(self):
+        assert redact("api_key=X") == "[REDACTED]"
+
 
 class TestLogFingerprint:
     def test_returns_length_and_hash_prefix(self):

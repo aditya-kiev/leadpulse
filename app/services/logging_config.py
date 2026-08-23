@@ -5,8 +5,27 @@ import sys
 from datetime import datetime, timezone
 
 
+# Any identifier SEGMENT naming a secret. Matching the whole surrounding
+# identifier (prefix/infix/suffix, snake_case or dashed) rather than the bare
+# word is what makes GEMINI_API_KEY / JWT_SECRET_KEY / STRIPE_WEBHOOK_SECRET /
+# DEMO_TOKEN_SECRET / CRM_ENCRYPTION_KEY redact -- a plain r"\b(...)\b" never
+# fires when the keyword is a suffix (underscore is a word char, so \b does
+# not exist between "_" and the keyword) or embedded mid-identifier.
+_SECRET_KEYWORD = r"(?:api[_-]?key|secret|token|password|passwd|key)"
+
 _REDACT_PATTERNS = [
-    re.compile(r"(?i)\b(api[_-]?key|secret|token|password|passwd)\b\s*[=:]\s*['\"]?[^\s'\"&,;]+['\"]?"),
+    # key=value / key: value, where the LHS is any identifier containing a
+    # secret keyword (covers NAME=value env-style leaks):
+    re.compile(
+        rf"(?i)[a-z0-9_\-]*{_SECRET_KEYWORD}[a-z0-9_\-]*\s*[=:]\s*"
+        r"['\"]?[^\s'\"&,;]+['\"]?"
+    ),
+    # dict / JSON-repr style: 'secret_keyword': 'value' and "key": "value"
+    # (the quotes around the key break the [=:] adjacency above):
+    re.compile(
+        rf"(?i)['\"](?:[a-z0-9_\-]*{_SECRET_KEYWORD}[a-z0-9_\-]*)['\"]"
+        r"\s*:\s*['\"][^'\"]*['\"]"
+    ),
     re.compile(r"(?i)\b(authorization|auth)\s*[=:]\s*['\"]?[^\s'\"&,;]+['\"]?"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.I),
     re.compile(r"\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}\b"),
