@@ -112,23 +112,37 @@ class RedisSlidingWindowRateLimiter:
 
 # ── Session cache ────────────────────────────────────────────────────────
 
-async def cache_session_state(session_id: str, state: dict, ttl: int = 300) -> None:
+def _session_cache_key(session_id: str, tenant_id: UUID) -> str:
+    """Tenant-scoped session cache key.
+
+    session_id is CLIENT-SUPPLIED and collides across tenants by design, so
+    the tenant id MUST be part of the key -- otherwise any tenant can read
+    another tenant's cached lead PII within the TTL by supplying a matching
+    session_id. ``none`` keeps legacy/no-tenant traffic in its own unambiguous
+    bucket rather than an empty key segment.
+    """
+    return f"session:{tenant_id if tenant_id is not None else 'none'}:{session_id}"
+
+
+async def cache_session_state(
+    session_id: str, state: dict, tenant_id: UUID | None, ttl: int = 300
+) -> None:
     r = await get_redis()
     if r is None:
         return
     try:
-        key = f"session:{session_id}"
+        key = _session_cache_key(session_id, tenant_id)
         await r.setex(key, ttl, json.dumps(state, default=str))
     except Exception as e:
         logger.debug("cache_session_state error: %s", e)
 
 
-async def get_cached_session_state(session_id: str) -> dict | None:
+async def get_cached_session_state(session_id: str, tenant_id: UUID | None) -> dict | None:
     r = await get_redis()
     if r is None:
         return None
     try:
-        key = f"session:{session_id}"
+        key = _session_cache_key(session_id, tenant_id)
         data = await r.get(key)
         if data:
             return json.loads(data)
@@ -138,13 +152,14 @@ async def get_cached_session_state(session_id: str) -> dict | None:
         return None
 
 
-async def invalidate_session_cache(session_id: str) -> None:
+async def invalidate_session_cache(session_id: str, tenant_id: UUID | None) -> None:
     r = await get_redis()
     if r is None:
         return
     try:
-        await r.delete(f"session:{session_id}")
-    except Exception:
+        await r.delete(_session_cache_key(session_id, tenant_id))
+    except Exception as e:
+        logger.debug("invalidate_session_cache error: %s", e)
         pass
 
 

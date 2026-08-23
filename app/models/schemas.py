@@ -102,7 +102,7 @@ class DebugStateOut(BaseModel):
     lead_status: str | None = None
     qualification_score: float | None = None
     missing_fields: list[str] = []
-    conversation_stage: str = "unknown"
+    conversation_stage: str | None = "unknown"
     next_action: str | None = None
     current_question: str | None = None
     conversation_history_len: int = 0

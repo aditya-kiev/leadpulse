@@ -78,7 +78,7 @@ class ConversationMemory:
                     current_node=state.get("current_node"),
                     human_escalated=state.get("human_escalated", False),
                 )
-                await invalidate_session_cache(session_id)
+                await invalidate_session_cache(session_id, tenant_id)
                 logger.debug("save_state OK session=%s", session_id)
         except Exception as e:
             logger.warning("save_state failed session=%s: %s", session_id, str(e))
@@ -86,7 +86,7 @@ class ConversationMemory:
 
     async def load_state(self, session_id: str, tenant_id: UUID | None = None) -> dict | None:
         logger.debug("load_state session=%s tenant_id=%s", session_id, tenant_id)
-        cached = await get_cached_session_state(session_id)
+        cached = await get_cached_session_state(session_id, tenant_id)
         if cached is not None:
             logger.debug("load_state cache HIT session=%s", session_id)
             return cached
@@ -114,7 +114,7 @@ class ConversationMemory:
                     "current_node": lead.current_node,
                     "human_escalated": lead.human_escalated,
                 }
-                await cache_session_state(session_id, state)
+                await cache_session_state(session_id, state, tenant_id)
                 logger.debug("load_state cache MISS session=%s", session_id)
                 return state
         except Exception as e:
