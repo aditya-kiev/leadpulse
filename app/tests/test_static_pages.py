@@ -16,7 +16,6 @@ async def client():
 
 
 EXPECTED = {
-    "/case-studies.html": "case-studies.html",
     "/demo-realestate": "demo-realestate-pro.html",
     "/demo-insurance": "demo-insurance-pro.html",
 }
@@ -35,11 +34,10 @@ async def test_static_pages_serve_real_files(client):
 
 
 @pytest.mark.asyncio
-async def test_case_studies_contains_real_anchors(client):
+async def test_case_studies_page_is_not_public(client):
+    # Pilot case studies were unpublished; the file is archived under docs/.
     resp = await client.get("/case-studies.html")
-    assert resp.status_code == 200
-    for anchor in ('id="real-estate-brokerage"', 'id="moore-real-estates"'):
-        assert anchor in resp.text
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio
