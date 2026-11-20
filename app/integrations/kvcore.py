@@ -137,8 +137,14 @@ class KVCoreIntegration(CRMIntegration):
 
     def _build_payload(self, lead_data: dict) -> dict:
         mapped = self._apply_field_mapping(lead_data)
+        contact = {}
+        if mapped.get("lead_email"):
+            contact["email"] = mapped["lead_email"]
+        if mapped.get("lead_phone"):
+            contact["phone"] = mapped["lead_phone"]
         return {
             "lead": {
+                **contact,
                 "firstName": (mapped.get("lead_name") or "").split(" ")[0],
                 "lastName": " ".join((mapped.get("lead_name") or "").split(" ")[1:]),
                 "company": mapped.get("company_name"),

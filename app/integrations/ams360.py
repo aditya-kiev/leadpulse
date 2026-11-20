@@ -146,6 +146,8 @@ class AMS360Integration(CRMIntegration):
                 "firstName": parts[0] if parts else "",
                 "lastName": parts[1] if len(parts) > 1 else "",
                 "companyName": mapped.get("company_name", ""),
+                "email": mapped.get("lead_email") or "",
+                "phone": mapped.get("lead_phone") or "",
                 "leadSource": "LeadAgent",
                 "type": mapped.get("lead_type", "individual"),
                 "notes": mapped.get("problem_statement", ""),

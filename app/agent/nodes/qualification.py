@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
+from app.agent.contact import contact_missing
 from app.agent.state import AgentState
 from app.agent.tools.lead_scoring import compute_lead_score
 from app.agent.nodes.helpers import safe_text
@@ -37,7 +38,7 @@ def _all_fields_populated(state: AgentState) -> bool:
                 return False
         elif not val:
             return False
-    return True
+    return not contact_missing(state)
 
 
 def create_qualification_node(model: ChatGoogleGenerativeAI):
@@ -54,6 +55,8 @@ def create_qualification_node(model: ChatGoogleGenerativeAI):
         if not _all_fields_populated(state):
             required = _required_fields_for(state.get("lead_type"))
             missing = [f for f in required if not state.get(f)]
+            if contact_missing(state):
+                missing.append("contact_info")
             return {
                 "missing_fields": missing,
                 "next_action": "collect_info",

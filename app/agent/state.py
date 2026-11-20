@@ -20,6 +20,9 @@ class AgentState(TypedDict):
     budget: float | None
     timeline: str | None
     problem_statement: str | None
+    lead_email: str | None
+    lead_phone: str | None
+    contact_declined: bool
 
     qualification_score: float | None
     lead_status: str | None
@@ -56,6 +59,9 @@ def get_initial_state(session_id: str, channel: str = "web", tenant_id: str | No
         "budget": None,
         "timeline": None,
         "problem_statement": None,
+        "lead_email": None,
+        "lead_phone": None,
+        "contact_declined": False,
         "qualification_score": None,
         "lead_status": None,
         "lead_intent": None,

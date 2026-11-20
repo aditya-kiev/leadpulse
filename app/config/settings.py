@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    app_name: str = "Lead Qualification Agent"
+    app_name: str = "LeadVigilo"
     debug: bool = False
     environment: str = "development"
 
@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     vertical: str = "generic"
     business_name: str = "our company"
+    # Ask every lead for a phone/email before scoring. A lead the office cannot
+    # call back is worthless; disable only for anonymous-info use cases.
+    require_contact_info: bool = True
 
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
