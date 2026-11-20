@@ -1,7 +1,7 @@
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.agent.graph import run_agent
 from app.agent.gemini import GeminiRateLimitError
@@ -12,6 +12,7 @@ from app.models.schemas import (
     StartConversationIn,
     StartConversationOut,
 )
+from app.services.alerts import dispatch_lead_events
 from app.services.memory import memory_service
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ def _resolve_tenant_id(request: Request) -> uuid.UUID | None:
 async def start_conversation(
     request: Request,
     payload: StartConversationIn,
+    background_tasks: BackgroundTasks,
     _auth: tuple = Depends(authenticate_request),
     _rate: None = Depends(rate_limit_webhook),
 ) -> StartConversationOut:
@@ -41,6 +43,7 @@ async def start_conversation(
         state_persisted = True
         try:
             await memory_service.save_state(session_id, result, tenant_id=tenant_id)
+            background_tasks.add_task(dispatch_lead_events, session_id, tenant_id, result)
         except Exception as db_err:
             state_persisted = False
             logger.exception(
@@ -78,6 +81,7 @@ async def start_conversation(
 async def handle_message(
     request: Request,
     payload: MessageIn,
+    background_tasks: BackgroundTasks,
     _auth: tuple = Depends(authenticate_request),
     _rate: None = Depends(rate_limit_webhook),
 ) -> MessageOut:
@@ -92,6 +96,7 @@ async def handle_message(
         state_persisted = True
         try:
             await memory_service.save_state(payload.session_id, result, tenant_id=tenant_id)
+            background_tasks.add_task(dispatch_lead_events, payload.session_id, tenant_id, result)
         except Exception as db_err:
             state_persisted = False
             logger.exception(

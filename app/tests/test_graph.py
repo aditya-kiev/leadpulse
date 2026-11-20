@@ -484,11 +484,14 @@ async def test_meeting_booking_first_entry_no_fallback_on_stray_keyword():
     )
 
 
-@pytest.mark.asyncio
-async def test_meeting_booking_reentry_confirms_with_generic_keyword():
-    """When current_node WAS already 'meeting_booking' (slots proposed on a
-    prior turn), a generic affirmative reply without an exact slot label
-    should fall back to slots[0] and confirm the booking."""
+_REENTRY_SLOTS = [
+    {"label": "Tuesday, Jul 21 at 10:00 AM", "datetime": "2026-07-21T10:00:00"},
+    {"label": "Wednesday, Jul 22 at 2:00 PM", "datetime": "2026-07-22T14:00:00"},
+    {"label": "Friday, Jul 24 at 11:00 AM", "datetime": "2026-07-24T11:00:00"},
+]
+
+
+async def _run_booking_node(user_text, assistant_text, slots=None, current_node="meeting_booking"):
     from unittest.mock import AsyncMock, MagicMock, patch
     from langchain_core.messages import HumanMessage
     from app.agent.nodes.meeting_booking import create_meeting_booking_node
@@ -497,43 +500,77 @@ async def test_meeting_booking_reentry_confirms_with_generic_keyword():
         "lead_name": "Jane",
         "company_name": None,
         "lead_status": "hot",
-        "messages": [
-            HumanMessage(content="Sure, that works."),
-        ],
-        "conversation_history": [
-            {"role": "assistant", "content": "I have Tuesday 10am, Wednesday 2pm, or Friday 11am."},
-        ],
+        "messages": [HumanMessage(content=user_text)],
+        "conversation_history": [{"role": "assistant", "content": assistant_text}],
         "booking_confirmed": False,
         "meeting_time": None,
         "session_id": "test-reentry",
-        "current_node": "meeting_booking",  # re-entry: slots were shown prior turn
+        "current_node": current_node,
     }
-
     mock_model = MagicMock()
-    mock_model.ainvoke = AsyncMock(return_value=MagicMock(
-        content="Perfect! I've booked you for Tuesday at 10am. You'll receive "
-                "a calendar invite shortly.",
-    ))
+    mock_model.ainvoke = AsyncMock(return_value=MagicMock(content="ok"))
+    with patch("app.agent.nodes.meeting_booking.get_available_slots", new_callable=AsyncMock) as mock_slots:
+        mock_slots.return_value = slots or _REENTRY_SLOTS
+        result = await create_meeting_booking_node(mock_model)(state)
+    return result, mock_model
 
-    with patch("app.agent.nodes.meeting_booking.get_available_slots",
-               new_callable=AsyncMock) as mock_slots:
-        mock_slots.return_value = [
-            {"label": "Tuesday, Jul 21 at 10:00 AM", "datetime": "2026-07-21T10:00:00"},
-            {"label": "Wednesday, Jul 22 at 2:00 PM", "datetime": "2026-07-22T14:00:00"},
-            {"label": "Friday, Jul 24 at 11:00 AM", "datetime": "2026-07-24T11:00:00"},
-        ]
 
-        node = create_meeting_booking_node(mock_model)
-        result = await node(state)
-
-    assert result.get("booking_confirmed") is True, (
-        f"Re-entry with generic 'sure, that works' must confirm, "
-        f"got booking_confirmed={result.get('booking_confirmed')!r}"
+@pytest.mark.asyncio
+async def test_meeting_booking_bare_yes_after_three_options_is_not_confirmed():
+    """A bare "sure, that works" after THREE offered times is ambiguous: we must
+    ask which one, never silently book the first slot (old behaviour)."""
+    result, model = await _run_booking_node(
+        "Sure, that works.", "I have Tuesday 10am, Wednesday 2pm, or Friday 11am."
     )
-    assert result.get("meeting_time") == "2026-07-21T10:00:00", (
-        f"meeting_time should default to first slot, "
-        f"got {result.get('meeting_time')!r}"
+    assert result["booking_confirmed"] is False
+    assert result["meeting_time"] is None
+    prompt = model.ainvoke.call_args[0][0][0].content
+    assert "NOT CONFIRMED" in prompt
+
+
+@pytest.mark.asyncio
+async def test_meeting_booking_bare_yes_after_single_offer_confirms_that_slot():
+    result, model = await _run_booking_node(
+        "Sure, that works.", "Would Wednesday at 2pm work for you?"
     )
+    assert result["booking_confirmed"] is True
+    assert result["meeting_time"] == "2026-07-22T14:00:00"
+    assert "CONFIRMED for Wednesday, Jul 22 at 2:00 PM" in model.ainvoke.call_args[0][0][0].content
+
+
+@pytest.mark.asyncio
+async def test_meeting_booking_explicit_slot_choice_confirms_that_slot():
+    result, _ = await _run_booking_node(
+        "Friday at 11 works for me", "I have Tuesday 10am, Wednesday 2pm, or Friday 11am."
+    )
+    assert result["booking_confirmed"] is True
+    assert result["meeting_time"] == "2026-07-24T11:00:00"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "I don't want to book anything",
+    "I'm not sure",
+    "no, that doesn't work for me",
+    "maybe later",
+    "yes but can you do another day?",
+    "can't do Tuesday",
+])
+async def test_meeting_booking_refusals_never_confirm(text):
+    """Regression: these used to confirm slots[0] because they contained
+    'book' or 'sure'."""
+    result, _ = await _run_booking_node(text, "Would Tuesday at 10am work?")
+    assert result["booking_confirmed"] is False
+    assert result["meeting_time"] is None
+
+
+@pytest.mark.asyncio
+async def test_meeting_booking_first_entry_never_confirms():
+    """Slots have not been offered yet on the turn we first enter the node."""
+    result, _ = await _run_booking_node(
+        "Tuesday at 10am", "Great, thanks for the details!", current_node="qualification"
+    )
+    assert result["booking_confirmed"] is False
 
 
 @pytest.mark.asyncio

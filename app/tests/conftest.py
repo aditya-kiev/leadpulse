@@ -40,6 +40,14 @@ def mock_settings_auth_disabled():
 
 
 @pytest.fixture(autouse=True)
+def mock_settings_contact_not_required():
+    """Legacy tests model leads with the original six fields only.  Tests of the
+    contact-capture feature opt in with ``patch(...require_contact_info, True)``."""
+    with patch("app.config.settings.settings.require_contact_info", False):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def mock_new_route_rate_limits_disabled():
     """Zero the newer route rate limits by default so pre-existing tests
     that POST /auth/register or /demo/token many times from one IP are never

@@ -102,6 +102,12 @@ class FollowUpBossIntegration(CRMIntegration):
         }
         if mapped.get("lead_type") == "individual":
             person.pop("company", None)
+        # Contact details: without these the CRM record cannot be called back.
+        # (FUB people use arrays of {"value": ...}; verify against current FUB docs.)
+        if mapped.get("lead_email"):
+            person["emails"] = [{"value": mapped["lead_email"]}]
+        if mapped.get("lead_phone"):
+            person["phones"] = [{"value": mapped["lead_phone"]}]
         return person
 
 

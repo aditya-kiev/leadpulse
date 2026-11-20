@@ -354,7 +354,8 @@ async def test_concurrent_cross_tenant_widget_conversations(client, pg_session_f
         # Patch ONCE around the whole gather: concurrent per-task patch() calls
         # on the same global target save/restore out of order and leak a stale
         # AsyncMock into later tests.
-        with patch("app.database.session.async_session_factory", pg_session_factory), \
+        with patch("app.api.webhook.dispatch_lead_events", new_callable=AsyncMock), \
+             patch("app.database.session.async_session_factory", pg_session_factory), \
              patch("app.services.memory.async_session_factory", pg_session_factory), \
              patch("app.config.settings.settings.webhook_rpm_limit", 0), \
              patch("app.api.webhook.run_agent", new_callable=AsyncMock) as mock_agent:

@@ -6,6 +6,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.agent.prompts.templates import get_prompts
+from app.agent.contact import (
+    build_contact_request,
+    contact_missing,
+    last_assistant_asked_for_contact,
+)
 from app.agent.state import AgentState
 from app.agent.nodes.helpers import log_fingerprint, parse_budget, safe_text
 from app.config.settings import settings as _settings
@@ -65,6 +70,9 @@ def _compute_missing(merged: dict, lead_type: str | None = None) -> list[str]:
                 missing.append(field)
         elif not val:
             missing.append(field)
+    # Contact details are asked last; a lead nobody can call back is worthless.
+    if contact_missing(merged):
+        missing.append("contact_info")
     return missing
 
 
@@ -116,6 +124,9 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
             "budget": budget,
             "timeline": timeline,
             "problem_statement": problem_statement,
+            "lead_email": state.get("lead_email"),
+            "lead_phone": state.get("lead_phone"),
+            "contact_declined": state.get("contact_declined", False),
         }
 
         missing_fields = _compute_missing(merged, lead_type)
@@ -132,6 +143,21 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
             }
 
         first_missing = missing_fields[0]
+
+        if first_missing == "contact_info":
+            # Only contact details remain: ask with fixed wording, no LLM call.
+            reply = build_contact_request(state, asked_before=last_assistant_asked_for_contact(state))
+            logger.info("NODE info_collection: asking for contact details (no LLM call)")
+            return {
+                "messages": [AIMessage(content=reply)],
+                "conversation_history": [{"role": "assistant", "content": reply}],
+                "missing_fields": missing_fields,
+                "current_node": "info_collection",
+                "next_action": "collect_info",
+                "conversation_stage": "collecting",
+                "current_question": "contact_info",
+            }
+
         logger.info(
             "NODE info_collection: LLM call 1/1 (combined extraction + question about '%s')",
             first_missing,
@@ -176,6 +202,11 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
         new_merged = {**merged, **updates_dict}
         new_missing = _compute_missing(new_merged, lead_type)
 
+        if new_missing and new_missing[0] == "contact_info":
+            # The lead just answered the last qualifying question: move straight
+            # to the contact request instead of the model's generic follow-up.
+            reply = build_contact_request({**state, **updates_dict})
+
         logger.info(
             "NODE info_collection EXIT: updates_keys=%s missing=%s reply=%s",
             sorted(updates_dict), new_missing, log_fingerprint(reply),
@@ -189,7 +220,7 @@ def create_info_collection_node(model: ChatGoogleGenerativeAI):
             "current_node": "info_collection",
             "next_action": "collect_info",
             "conversation_stage": "collecting",
-            "current_question": first_missing if new_missing else None,
+            "current_question": new_missing[0] if new_missing else None,
         }
 
     return info_collection_node

@@ -14,7 +14,8 @@ Set these in `.env` (copy from `.env.example`):
 ```
 VERTICAL=real_estate       # or insurance
 BUSINESS_NAME=Your Brokerage or Agency Name
-ALLOWED_ORIGINS=["*"]      # required so the HTML can reach the API
+ALLOWED_ORIGINS=["https://your-demo-host.example"]  # explicit origins only; production startup rejects "*".
+                                                    # The demo pages are served by the API itself (same origin), so no wildcard is needed.
 GEMINI_API_KEY=your-key
 ```
 
@@ -29,10 +30,10 @@ pages directly — no double-clicking needed):
 
 - `http://localhost:8000/demo-realestate`
 - `http://localhost:8000/demo-insurance`
-- `http://localhost:8000/case-studies.html`
 
 The pages live in `static/` and are wired up via `app/main.py` (see the
-`/demo-realestate`, `/demo-insurance`, and `/case-studies.html` routes).
+`/demo-realestate` and `/demo-insurance` routes). Pilot case studies are
+archived under `docs/archive/` and are not publicly served.
 
 ## What to expect
 
@@ -42,7 +43,9 @@ The pages live in `static/` and are wired up via `app/main.py` (see the
    status all appear as the lead talks. This is the "wow" moment: no forms,
    no manual entry.
 4. Once enough info is collected, the bot scores the lead (hot/warm/cold)
-   and offers to book a meeting.
+   and offers meeting times. When the lead picks one, the agent records the
+   requested time and emails the office a meeting request with a one-click
+   add-to-calendar link; it does not write directly to a calendar.
 5. The "✓ Meeting confirmed" badge only appears **after** the bot proposes
    specific times and the lead confirms — UI-side sanity check as a second
    line of defense.

@@ -229,7 +229,7 @@ async def test_full_forgot_and_reset_flow_real_db(pg_session_factory, client):
         assert emails, "forgot-password must enqueue a reset email"
         reset_email = emails[-1]
         assert reset_email["to"] == data["email"]
-        assert "Reset your LeadPulse password" in reset_email["subject"]
+        assert "Reset your LeadVigilo password" in reset_email["subject"]
         assert "auth/reset?token=" in reset_email["body"], reset_email["body"]
         token = reset_email["body"].split("auth/reset?token=", 1)[1].split()[0]
         assert token

@@ -190,11 +190,6 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-@app.get("/case-studies.html", include_in_schema=False)
-async def case_studies_page() -> FileResponse:
-    return FileResponse(STATIC_DIR / "case-studies.html", media_type="text/html")
-
-
 @app.get("/demo-realestate", include_in_schema=False)
 async def demo_realestate_page() -> FileResponse:
     return FileResponse(STATIC_DIR / "demo-realestate-pro.html", media_type="text/html")

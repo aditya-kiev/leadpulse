@@ -419,10 +419,17 @@ async def test_webhook_full_conversation_persists_confirmed_booking(pg_session_f
     ``meeting_time``.  Before the fix, ``state_persisted`` came back false and
     the DB row kept ``booking_confirmed=false`` / ``meeting_time=NULL`` even
     though the lead was told they were booked."""
+    from fastapi import BackgroundTasks
+
     from app.api.webhook import handle_message
     from app.models.schemas import MessageIn
 
     session_id = f"itest-webhook-{uuid4()}"
+    fixed_slots = [
+        {"label": "Wednesday, August 19 at 09:00 AM UTC", "datetime": "2026-08-19T09:00:00+00:00"},
+        {"label": "Wednesday, August 19 at 10:00 AM UTC", "datetime": "2026-08-19T10:00:00+00:00"},
+        {"label": "Thursday, August 20 at 02:00 PM UTC", "datetime": "2026-08-20T14:00:00+00:00"},
+    ]
 
     # Scripted Gemini model — branches on the system prompt so each node gets
     # a legitimate canned response and the graph really traverses
@@ -472,6 +479,7 @@ async def test_webhook_full_conversation_persists_confirmed_booking(pg_session_f
          patch("app.agent.graph.ChatGoogleGenerativeAI", return_value=MagicMock()), \
          patch("app.agent.graph.RetryingGeminiModel", return_value=scripted), \
          patch("app.agent.graph._agent_graph", None), \
+         patch("app.agent.nodes.meeting_booking.get_available_slots", new=AsyncMock(return_value=fixed_slots)), \
          patch("app.agent.graph.get_last_usage", return_value=None):
         # Force a fresh graph built with the scripted model.
         from app.agent.graph import get_graph
@@ -482,6 +490,7 @@ async def test_webhook_full_conversation_persists_confirmed_booking(pg_session_f
         res1 = await handle_message(
             SimpleNamespace(state=SimpleNamespace(tenant_id=None)),
             MessageIn(session_id=session_id, message="Hello"),
+            BackgroundTasks(),
         )
         assert res1.state_persisted is True, (
             "turn 1 state must persist against real Postgres"
@@ -491,7 +500,8 @@ async def test_webhook_full_conversation_persists_confirmed_booking(pg_session_f
         # Turn 2 — lead confirms the booking.
         res2 = await handle_message(
             SimpleNamespace(state=SimpleNamespace(tenant_id=None)),
-            MessageIn(session_id=session_id, message="Yes, let's book a meeting"),
+            MessageIn(session_id=session_id, message="Wednesday at 10am works for me"),
+            BackgroundTasks(),
         )
         assert res2.state_persisted is True, (
             "booking state must persist against real Postgres — this is the "
@@ -499,6 +509,8 @@ async def test_webhook_full_conversation_persists_confirmed_booking(pg_session_f
         )
         assert res2.booking_confirmed is True
         assert res2.meeting_time is not None
+        # The lead picked Wednesday 10am - NOT "the first slot".
+        assert "10:00:00" in str(res2.meeting_time)
 
     # The real proof: what landed in Postgres.
     async with pg_session_factory() as db_session:

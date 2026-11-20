@@ -9,6 +9,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langchain_google_genai import ChatGoogleGenerativeAI
 
+from app.agent.contact import extract_contact, is_contact_decline, last_assistant_asked_for_contact
 from app.agent.state import AgentState, get_initial_state
 from app.agent.gemini import RetryingGeminiModel, gemini_call_counter, get_last_usage, estimate_gemini_cost
 from app.agent.nodes.greeting import create_greeting_node
@@ -385,6 +386,22 @@ async def run_agent(
     turn_input["conversation_history"] = (
         turn_input.get("conversation_history") or []
     ) + [{"role": "user", "content": message, "timestamp": now}]
+
+    # Contact capture is deterministic and node-independent: a lead may volunteer
+    # a phone/email at any point (greeting, FAQ, objection...), and a refusal to
+    # our contact question must never trap them in a loop.
+    email, phone = extract_contact(message)
+    if email:
+        turn_input["lead_email"] = email
+    if phone:
+        turn_input["lead_phone"] = phone
+    if (
+        not (email or phone)
+        and not turn_input.get("contact_declined")
+        and last_assistant_asked_for_contact(turn_input)
+        and is_contact_decline(message)
+    ):
+        turn_input["contact_declined"] = True
 
     result = await graph.ainvoke(turn_input, config)
     result["tenant_id"] = tenant_id_str

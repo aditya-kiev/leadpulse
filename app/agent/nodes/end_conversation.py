@@ -1,5 +1,4 @@
 import logging
-from uuid import UUID
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -7,19 +6,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from app.agent.prompts.templates import get_prompts
 from app.agent.state import AgentState
 from app.agent.nodes.helpers import log_fingerprint, safe_text
-from app.agent.tools.crm import update_crm
-from app.services.notifications import notify_tenant
 
 logger = logging.getLogger("graph.node.end_conversation")
-
-
-def _parse_tenant_id(raw: str | None) -> UUID | None:
-    if raw is None:
-        return None
-    try:
-        return UUID(raw)
-    except (ValueError, AttributeError):
-        return None
 
 
 def create_end_conversation_node(model: ChatGoogleGenerativeAI):
@@ -27,27 +15,13 @@ def create_end_conversation_node(model: ChatGoogleGenerativeAI):
         user_msgs = [m for m in state.get("messages", []) if isinstance(m, HumanMessage)]
         raw_last = user_msgs[-1].content if user_msgs else ""
         user_message = safe_text(raw_last)
-        tenant_id = _parse_tenant_id(state.get("tenant_id"))
-        logger.info("NODE end_conversation ENTERED: session=%s tenant=%s lead_status=%s",
-                    state.get("session_id"), tenant_id, state.get("lead_status"))
+        logger.info("NODE end_conversation ENTERED: session=%s lead_status=%s",
+                    state.get("session_id"), state.get("lead_status"))
 
-        lead_data = {
-            k: state.get(k) for k in [
-                "lead_name", "company_name", "industry", "budget", "timeline",
-                "problem_statement", "qualification_score", "lead_status",
-                "meeting_time", "booking_confirmed", "human_escalated",
-            ]
-        }
-        await update_crm(state["session_id"], lead_data, tenant_id=tenant_id)
-        logger.info("NODE end_conversation: CRM updated")
-
-        # Hot-lead / meeting-booked notifications are fire-and-forget: an
-        # email/SMS outage must never break the conversation itself.
-        if tenant_id is not None:
-            try:
-                await notify_tenant(tenant_id, state)
-            except Exception as e:
-                logger.warning("notify_tenant failed for session=%s: %s", state.get("session_id"), e)
+        # CRM sync and hot/booked/handoff alerts are NOT sent from here. This
+        # node re-runs on every message after a conversation ends, which used to
+        # re-push the lead and re-email the client each time.  They are now
+        # dispatched exactly once by app.services.alerts after state is saved.
 
         response = await model.ainvoke([
             SystemMessage(content=get_prompts(state.get("vertical")).END_CONVERSATION_PROMPT.format(

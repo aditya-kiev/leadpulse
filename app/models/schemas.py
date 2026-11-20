@@ -58,6 +58,8 @@ class ConversationHistoryOut(BaseModel):
     budget: float | None = None
     timeline: str | None = None
     problem_statement: str | None = None
+    lead_email: str | None = None
+    lead_phone: str | None = None
     qualification_score: float | None = None
     lead_status: str | None = None
     booking_confirmed: bool = False

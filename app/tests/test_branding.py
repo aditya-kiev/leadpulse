@@ -53,7 +53,7 @@ async def test_derive_palette_light_color_gets_dark_text():
 async def test_get_branding_defaults():
     from app.services.branding import get_branding
     b = get_branding()
-    assert b.brand_name == "LeadPulse"
+    assert b.brand_name == "LeadVigilo"
     assert b.logo_url == ""
     assert b.primary_color == "#4F46E5"
     assert b.has_branding is False
@@ -98,12 +98,12 @@ async def test_branding_css_variables():
 async def test_apply_branding_to_html():
     from app.services.branding import get_branding, apply_branding_to_html
     b = get_branding(brand_name="TestCo", primary_color="#FF6600")
-    html = "<html><head></head><body><h1>Lead<span>Pulse</span> Analytics</h1><title>LeadPulse — Analytics Dashboard</title></body></html>"
+    html = "<html><head></head><body><h1>LeadVigilo Analytics</h1><title>LeadVigilo — Analytics Dashboard</title></body></html>"
     result = apply_branding_to_html(html, b)
     assert "TestCo" in result
     assert "FF6600" in result
     assert "#4F46E5" not in result  # default color replaced
-    assert "LeadPulse — Analytics Dashboard" not in result  # title replaced
+    assert "LeadVigilo — Analytics Dashboard" not in result  # title replaced
 
 
 # ── API endpoints (auth_enabled=False, super_admin can access) ──

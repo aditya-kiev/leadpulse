@@ -287,8 +287,8 @@ class TestWidgetSnippet:
 
     def test_backend_failure_logged_to_console(self):
         snippet = self._snippet()
-        assert "console.error('[LeadPulse] send failed: ' + (err && err.message));" in snippet
-        assert "console.error('[LeadPulse] start failed: ' + (err && err.message));" in snippet
+        assert "console.error('[LeadVigilo] send failed: ' + (err && err.message));" in snippet
+        assert "console.error('[LeadVigilo] start failed: ' + (err && err.message));" in snippet
 
 
 class TestChecklist:
