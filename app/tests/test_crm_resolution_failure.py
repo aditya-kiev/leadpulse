@@ -102,39 +102,62 @@ async def test_update_crm_resolution_failure_does_not_raise_and_logs_push(pg_ses
 
 
 @pytest.mark.asyncio
-async def test_end_conversation_still_delivers_reply_when_resolution_fails(pg_session_factory):
-    """The full end_conversation node must still return its final message
-    even when CRM resolution explodes."""
+async def test_end_conversation_replies_and_does_not_touch_crm_or_notifications():
+    """The end node only writes the closing message.  CRM sync and client alerts
+    moved to app.services.alerts (once-only), so re-running this node on every
+    post-conversation message can no longer spam the CRM or the client."""
     from app.agent.nodes.end_conversation import create_end_conversation_node
+
+    mock_model = AsyncMock()
+    mock_model.ainvoke.return_value = type("Resp", (), {"content": "We'll be in touch!"})()
+    node = create_end_conversation_node(mock_model)
+
+    with patch("app.agent.tools.crm.update_crm", new_callable=AsyncMock) as crm, \
+         patch("app.services.notifications.notify_tenant", new_callable=AsyncMock) as notify:
+        for _ in range(3):
+            out = await node({
+                "session_id": "sess-end", "tenant_id": str(uuid4()),
+                "messages": [HumanMessage(content="Goodbye")],
+                "lead_name": "Resolve Node", "company_name": "ACME",
+                "lead_status": "hot", "booking_confirmed": True, "human_escalated": False,
+            })
+            assert out["messages"][0].content == "We'll be in touch!"
+            assert out["current_node"] == "end"
+    crm.assert_not_called()
+    notify.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_survives_crm_resolution_failure(pg_session_factory):
+    """A CRM outage must never raise out of the background dispatcher."""
+    from app.services.alerts import dispatch_lead_events
 
     org_id = None
     try:
-        org_id = await _seed_tenant(pg_session_factory, slug=f"resnode-{uuid4().hex[:8]}")
-        mock_model = AsyncMock()
-        mock_model.ainvoke.return_value = type("Resp", (), {"content": "We'll be in touch!"})()
-
-        node = create_end_conversation_node(mock_model)
+        org_id = await _seed_tenant(pg_session_factory, slug=f"resdisp-{uuid4().hex[:8]}")
 
         async def _boom(tenant_id):
             raise RuntimeError("simulated resolution outage")
 
         with patch("app.database.session.async_session_factory", pg_session_factory), \
              patch("app.database.crud.async_session_factory", pg_session_factory), \
+             patch("app.services.alerts.async_session_factory", pg_session_factory), \
              patch("app.agent.tools.crm.resolve_integration", side_effect=_boom), \
-             patch("app.agent.nodes.end_conversation.notify_tenant", new_callable=AsyncMock):
-            out = await node({
-                "session_id": f"sess-{uuid4().hex[:8]}",
-                "tenant_id": org_id,
-                "messages": [HumanMessage(content="Goodbye")],
-                "lead_name": "Resolve Node",
-                "company_name": "ACME",
-                "lead_status": "hot",
-                "booking_confirmed": False,
-                "human_escalated": False,
+             patch("app.services.alerts.notify_tenant", new_callable=AsyncMock):
+            sid = f"sess-{uuid4().hex[:8]}"
+            from app.database.models import LeadConversation
+            async with pg_session_factory() as db:
+                db.add(LeadConversation(session_id=sid, tenant_id=org_id))
+                await db.commit()
+            out = await dispatch_lead_events(sid, org_id, {
+                "lead_name": "Resolve Node", "lead_status": "hot",
+                "booking_confirmed": False, "human_escalated": False,
             })
-
-        assert out["messages"][0].content == "We'll be in touch!"
-        assert out["current_node"] == "end"
+        assert "alerts" in out
     finally:
         if org_id:
+            from app.database.models import LeadConversation
+            async with pg_session_factory() as db:
+                await db.execute(delete(LeadConversation).where(LeadConversation.tenant_id == org_id))
+                await db.commit()
             await _cleanup_org(pg_session_factory, org_id)

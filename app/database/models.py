@@ -90,6 +90,9 @@ class LeadConversation(Base):
     budget: Mapped[float | None] = mapped_column(Float, nullable=True)
     timeline: Mapped[str | None] = mapped_column(String(255), nullable=True)
     problem_statement: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lead_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lead_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    contact_declined: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     qualification_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     lead_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
     lead_intent: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -100,6 +103,11 @@ class LeadConversation(Base):
     conversation_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
     current_node: Mapped[str | None] = mapped_column(String(50), nullable=True)
     human_escalated: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Idempotency markers: each client-facing side effect happens at most once.
+    hot_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    booking_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    handoff_alert_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    crm_sync_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
