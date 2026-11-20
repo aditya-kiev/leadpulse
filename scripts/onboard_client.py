@@ -1,5 +1,5 @@
 """
-Onboard a new LeadPulse client without touching code.
+Onboard a new LeadVigilo client without touching code.
 
 Creates a new tenant using the existing multi-tenant tables:
   - ``organizations``  — the tenant/agency row
@@ -100,7 +100,7 @@ def _widget_snippet(
     css_color = primary_color or "#4F46E5"
     brand = brand_name or "Chat with us"
     widget_key_js = repr(widget_key) if widget_key else "''"
-    return f"""<!-- LeadPulse chat widget — tenant: {tenant_slug} -->
+    return f"""<!-- LeadVigilo chat widget — tenant: {tenant_slug} -->
 <script>
 (function () {{
   var API = {api_base!r};
@@ -165,7 +165,7 @@ def _widget_snippet(
         "\n    if (WIDGET_KEY) authHeaders['X-Widget-Key'] = WIDGET_KEY;" if widget_key else ""
     ) + f"""
     }} catch (err) {{
-      console.error('[LeadPulse] start failed: ' + (err && err.message));
+      console.error('[LeadVigilo] start failed: ' + (err && err.message));
       bubble('agent', BACKEND_ERROR);
       return;
     }}
@@ -179,7 +179,7 @@ def _widget_snippet(
       var sd = await s.json();
       bubble('agent', sd.message || 'Hello! How can I help you today?');
     }} catch (err) {{
-      console.error('[LeadPulse] start failed: ' + (err && err.message));
+      console.error('[LeadVigilo] start failed: ' + (err && err.message));
       bubble('agent', BACKEND_ERROR);
     }}
   }}
@@ -200,7 +200,7 @@ def _widget_snippet(
       var d = await r.json();
       bubble('agent', d.reply || 'I understand. Let me help you with that.');
     }} catch (err) {{
-      console.error('[LeadPulse] send failed: ' + (err && err.message));
+      console.error('[LeadVigilo] send failed: ' + (err && err.message));
       bubble('agent', BACKEND_ERROR);
     }}
     sending = false;
@@ -238,7 +238,7 @@ def _setup_checklist(
     subdomain = f"https://{slug}.{app_hostname}" if app_hostname else None
     lines = [
         "=" * 66,
-        "LEADPULSE — CLIENT ONBOARDING CHECKLIST",
+        "LEADVIGILO — CLIENT ONBOARDING CHECKLIST",
         "=" * 66,
         f"[x] Organization created       name={org['name']}",
         f"[x] Tenant slug                {slug}  (id={org['id']})",
@@ -408,7 +408,7 @@ async def onboard_client(args: argparse.Namespace) -> OnboardResult:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Onboard a new LeadPulse client (organization + widget + checklist).",
+        description="Onboard a new LeadVigilo client (organization + widget + checklist).",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--agency", required=True, help="Agency / client name")

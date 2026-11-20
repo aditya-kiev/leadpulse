@@ -11,7 +11,7 @@ from typing import Self
 
 @dataclass
 class BrandingConfig:
-    brand_name: str = "LeadPulse"
+    brand_name: str = "LeadVigilo"
     logo_url: str = ""
     primary_color: str = "#4F46E5"
     primary_light: str = "#818CF8"
@@ -69,7 +69,7 @@ def get_branding(
     palette = derive_palette(primary_color) if primary_color else {}
     has_branding = bool(brand_name or logo_url or primary_color)
     return BrandingConfig(
-        brand_name=brand_name or "LeadPulse",
+        brand_name=brand_name or "LeadVigilo",
         logo_url=logo_url or "",
         primary_color=primary_color or "#4F46E5",
         primary_light=palette.get("primary_light", "#818CF8"),
@@ -98,7 +98,7 @@ def apply_branding_to_html(html: str, b: BrandingConfig) -> str:
     css_vars = branding_css_variables(b)
     injected = f"<style id=\"branding-vars\">{css_vars}</style>"
     html = html.replace("</head>", f"{injected}\n</head>")
-    html = html.replace("LeadPulse — Analytics Dashboard", f"{b.brand_name} — Dashboard")
+    html = html.replace("LeadVigilo — Analytics Dashboard", f"{b.brand_name} — Dashboard")
     html = html.replace(
         '<h1>Lead<span>Pulse</span> Analytics</h1>',
         f'<h1 id="brand-title" style="color:var(--brand-primary)">{b.brand_name}</h1>',

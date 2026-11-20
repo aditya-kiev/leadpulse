@@ -1,6 +1,6 @@
-# Lead Qualification Agent
+# LeadVigilo
 
-A multi-tenant, AI-powered lead qualification system built with LangGraph, FastAPI, and Google Gemini. One dedicated instance (organization) per client. It engages website leads via a JSON widget (or webhook API), collects qualification data, scores leads against an ICP (real estate / insurance / generic), handles objections, books meetings, sends hot-lead notifications, and pushes qualified leads into the client's CRM.
+A multi-tenant, AI-powered lead qualification system built with LangGraph, FastAPI, and Google Gemini. One dedicated instance (organization) per client. It engages website leads via a JSON widget (or webhook API), collects qualification data, scores leads against an ICP (real estate / insurance / generic), handles objections, records the meeting time a lead requests and emails the office a meeting request with a one-click add-to-calendar link (it does not write to the client's calendar), sends hot-lead notifications, and pushes qualified leads into the client's CRM.
 
 ## Overview
 
@@ -185,6 +185,10 @@ pushes are enqueued for the `crm_worker` retry.
 | `REFRESH_RPM_LIMIT` | `30` | `/auth/refresh` per verified token subject (IP fallback) per hour |
 | `DEMO_TOKEN_MINT_RPM_LIMIT` | `20` | `/demo/token` mints per IP per hour |
 
+## Lead lifecycle, alerts & reports
+
+Contact capture, once-only alerts, booking confirmation rules, CRM sync and the weekly client report are documented in [docs/LEAD_FLOW.md](docs/LEAD_FLOW.md).
+
 ## Graph Structure (LangGraph)
 
 ```
@@ -203,7 +207,7 @@ greeting ──→ info_collection ──→ qualification ──→ handle_next
 - **qualification**: Score lead (budget, timeline, industry, problem, intent) + ICP bonus
 - **handle_next**: LLM-based objection detection on last user message
 - **objection_handling**: Address pricing / timing / trust / competition / need / authority objections
-- **meeting_booking**: Suggest Calendly slots or stub slots, confirm booking
+- **meeting_booking**: Suggest Calendly slots or stub slots, record the lead's chosen time and email the office a meeting request with a one-click add-to-calendar link
 - **human_handoff**: Escalate low-confidence or explicit human requests
 - **end**: Summarize and close
 
@@ -267,9 +271,7 @@ Static demo widgets are served at `/demo-realestate` and `/demo-insurance`.
 # Full suite against real Postgres + Redis
 TEST_DATABASE_URL="postgresql+asyncpg://postgres:postgres@localhost:5432/lead_agent_test" \
   python -m pytest -q
-# 324 passed, 1 failed (the single failure is a known, environment-dependent
-# crm_worker race: `test_worker_drains_queued_push` — a live worker drains the
-# queue between enqueue and read)
+# 438 passed (needs Postgres + Redis, migrations applied: `alembic upgrade head`)
 ```
 
 The suite runs against a real Postgres + Redis test setup (not mocked DB/Redis

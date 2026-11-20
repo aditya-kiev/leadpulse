@@ -571,7 +571,7 @@ async def test_dashboard_page_returns_html(client):
     response = await client.get("/analytics/dashboard")
     assert response.status_code == 200
     assert "text/html" in response.headers.get("content-type", "")
-    assert "LeadPulse" in response.text
+    assert "LeadVigilo" in response.text
 
 
 @pytest.mark.asyncio

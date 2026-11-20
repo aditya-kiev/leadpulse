@@ -1,5 +1,5 @@
 """
-Manage LeadPulse subscriptions from the command line, without a payment
+Manage LeadVigilo subscriptions from the command line, without a payment
 processor. Mutates ``organizations.billing_status`` / billing timestamps.
 
 Usage:
@@ -99,7 +99,7 @@ async def run_cmd(args: argparse.Namespace) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Manage LeadPulse subscriptions (billing_status) without a payment processor.",
+        description="Manage LeadVigilo subscriptions (billing_status) without a payment processor.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     group = parser.add_mutually_exclusive_group(required=True)
